@@ -21,5 +21,7 @@ def send_command(cmd: str) -> str:
         return response
     except ConnectionRefusedError:
         return "error: controller not running. Start with: uv run scripts/controller.py &"
+    except (socket.timeout, OSError) as e:
+        return f"error: {e}"
     finally:
         sock.close()

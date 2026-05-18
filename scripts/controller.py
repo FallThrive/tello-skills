@@ -26,7 +26,7 @@ TCP_HOST = '127.0.0.1'
 TCP_PORT = 9999
 
 
-class KalmanBoxTracker:
+class SlidingWindowTracker:
     """滑动窗口平滑边界框中心点（基于历史均值的卡尔曼替代方案）"""
 
     def __init__(self):
@@ -55,7 +55,7 @@ class TelloController:
 
         # --- YOLO 相关 ---
         self._yolo_model = None
-        self._yolo_tracker = KalmanBoxTracker()
+        self._yolo_tracker = SlidingWindowTracker()
 
     # ------------------------------------------------------------------
     # 连接
@@ -75,7 +75,8 @@ class TelloController:
             time.sleep(self._heartbeat_interval)
             if not self._running:
                 break
-            elapsed = time.time() - self._last_cmd_time
+            with self._lock:
+                elapsed = time.time() - self._last_cmd_time
             if elapsed >= self._heartbeat_interval:
                 with self._lock:
                     try:
@@ -134,8 +135,10 @@ class TelloController:
             self.tello.land()
             return "ok"
         elif action == "move":
-            direction = args[0] if len(args) > 0 else ""
-            dist = int(args[1]) if len(args) > 1 else 0
+            if len(args) < 2:
+                return "error: missing required arguments"
+            direction = args[0]
+            dist = int(args[1])
             moves = {
                 'f': lambda: self.tello.move_forward(dist),
                 'b': lambda: self.tello.move_back(dist),
@@ -149,8 +152,10 @@ class TelloController:
             moves[direction]()
             return "ok"
         elif action == "rotate":
-            direction = args[0] if len(args) > 0 else ""
-            deg = int(args[1]) if len(args) > 1 else 0
+            if len(args) < 2:
+                return "error: missing required arguments"
+            direction = args[0]
+            deg = int(args[1])
             if direction == "cw":
                 self.tello.rotate_clockwise(deg)
             elif direction == "ccw":
@@ -174,13 +179,19 @@ class TelloController:
 
     def _handle_led(self, action, args):
         if action == "solid":
+            if len(args) < 3:
+                return "error: missing required arguments"
             r, g, b = int(args[0]), int(args[1]), int(args[2])
             self.tello.send_expansion_command(f"led {r} {g} {b}")
         elif action == "breathe":
+            if len(args) < 4:
+                return "error: missing required arguments"
             freq = float(args[0])
             r, g, b = int(args[1]), int(args[2]), int(args[3])
             self.tello.send_expansion_command(f"led br {freq} {r} {g} {b}")
         elif action == "blink":
+            if len(args) < 7:
+                return "error: missing required arguments"
             freq = float(args[0])
             r1, g1, b1 = int(args[1]), int(args[2]), int(args[3])
             r2, g2, b2 = int(args[4]), int(args[5]), int(args[6])
@@ -199,6 +210,8 @@ class TelloController:
 
     def _handle_matrix(self, action, args):
         if action == "scroll":
+            if len(args) < 4:
+                return "error: missing required arguments"
             direction = args[0]
             color = args[1]
             freq = float(args[2])
@@ -207,6 +220,8 @@ class TelloController:
                 f"mled {direction} {color} {freq} {text}"
             )
         elif action == "static":
+            if len(args) < 2:
+                return "error: missing required arguments"
             color = args[0]
             text = " ".join(args[1:])
             self.tello.send_expansion_command(f"mled s {color} {text}")
@@ -256,6 +271,7 @@ class TelloController:
             self._frame_read = self.tello.get_frame_read()
         elif action == "stream_off":
             self.tello.streamoff()
+            self._frame_read = None
         elif action == "photo":
             name = args[0] if args else "photo.jpg"
             cv2.imwrite(name, self._frame_read.frame)
@@ -279,18 +295,21 @@ class TelloController:
     def _record_loop(self):
         import cv2
 
-        if self._frame_read is None:
-            return
-        h, w, _ = self._frame_read.frame.shape
-        out = cv2.VideoWriter(
-            self._recording_filename,
-            cv2.VideoWriter_fourcc(*'XVID'),
-            30, (w, h),
-        )
-        while self._recording:
-            out.write(self._frame_read.frame)
-            time.sleep(0.01)
-        out.release()
+        try:
+            if self._frame_read is None:
+                return
+            h, w, _ = self._frame_read.frame.shape
+            out = cv2.VideoWriter(
+                self._recording_filename,
+                cv2.VideoWriter_fourcc(*'XVID'),
+                30, (w, h),
+            )
+            while self._recording:
+                out.write(self._frame_read.frame)
+                time.sleep(0.01)
+            out.release()
+        except Exception as e:
+            logger.error(f"录制异常: {e}")
 
     # ------------------------------------------------------------------
     # YOLO 模块
@@ -350,7 +369,7 @@ class TelloController:
                         })
             else:
                 # 没有检测到人，重置 tracker
-                self._yolo_tracker = KalmanBoxTracker()
+                self._yolo_tracker = SlidingWindowTracker()
 
             return json.dumps(persons, ensure_ascii=False)
 
@@ -379,7 +398,9 @@ class TelloController:
             z = self.tello.get_mission_pad_distance_z()
             return f"{x} {y} {z}"
         elif action == "fly":
-            pad_id = int(args[1]) if len(args) > 1 and args[0] == "--id" else 1
+            if len(args) < 2 or args[0] != "--id":
+                return "error: missing required arguments"
+            pad_id = int(args[1])
             self.tello.go_xyz_speed_mid(0, 0, 60, 30, pad_id)
         else:
             return f"error: unknown mission_pad action '{action}'"
