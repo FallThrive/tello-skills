@@ -1,6 +1,6 @@
 ---
 name: tello
-description: 控制 Tello TT 无人机，支持飞行、拍摄、LED、挑战卡、YOLO 检测、视觉跟踪等功能。当用户提到无人机飞行、航拍、跟踪、避障、Tello，或需要控制真实无人机时应使用此技能。
+description: 控制 Tello TT 无人机，支持飞行、拍摄、LED、挑战卡、YOLO 检测、视觉跟踪等功能。Make sure to use this skill whenever the user mentions drone, UAV, Tello, 无人机, 航拍, 跟踪, 避障, 飞行控制, or needs to control a real drone — even if they don't explicitly say "Tello".
 ---
 
 # Tello 无人机控制技能
@@ -17,6 +17,16 @@ uv run scripts/<模块>.py <子命令> [--参数]
 
 - **`scripts/flight.py` / `led.py` / `vision.py` 等** — 单次命令脚本，执行完即退出
 - **`scripts/tasks/`** — 实时闭环脚本，持续运行至超时或任务完成
+
+## 脚本调用方式
+
+所有脚本使用 Bash 工具执行，工作目录为项目根目录：
+
+```
+uv run scripts/<模块>.py <子命令> [--参数]
+```
+
+具体命令格式参见下方模块速查。
 
 ## 模块速查
 
@@ -79,14 +89,14 @@ uv run scripts/vision.py record_start --name <文件名>
 uv run scripts/vision.py record_stop
 ```
 
-### yolo.py — YOLO 检测 + 卡尔曼滤波
+### yolo.py — YOLO 检测 + 滑动窗口平滑
 
 ```
-uv run scripts/yolo.py detect          # 检测人员，输出边界框列表（卡尔曼滤波平滑）
+uv run scripts/yolo.py detect          # 检测人员，输出滑动窗口平滑后的边界框 JSON
 uv run scripts/yolo.py count           # 检测人员，输出人数
 ```
 
-内部使用卡尔曼滤波器平滑边界框中心位置，减少抖动。
+内部使用滑动窗口（最近 5 帧取均值）平滑边界框中心，减少抖动。
 
 ### mission_pad.py — 挑战卡
 
@@ -117,7 +127,7 @@ uv run scripts/tasks/task_search_pad.py --direction <f/b/l/r> [--step 30] [--max
 
 ### task_follow.py — 实时人员跟随
 
-YOLO 检测人员，卡尔曼滤波平滑，比例控制器驱动 rc_control 实时跟随。前后距离通过人物像素大小（分割面积/躯干高度）控制。
+YOLO 检测人员，滑动窗口平滑中心点，比例控制器驱动 rc_control 实时跟随。前后距离通过人物像素大小（分割面积/躯干高度）控制。
 
 ```
 uv run scripts/tasks/task_follow.py [--duration 120] [--model seg]
@@ -127,10 +137,8 @@ uv run scripts/tasks/task_follow.py [--duration 120] [--model seg]
 - `--duration`：跟随时长秒（默认 120）
 - `--model`：跟踪模型，`seg`（分割面积控制距离）或 `pose`（躯干高度控制距离），默认 `seg`
 
-行为：YOLO 检测 → 卡尔曼滤波平滑边界框中心 → 计算中心偏移(yaw+ud) + 像素面积/躯干高度(fb) → 比例控制器 → rc_control → LED 红灯 + 屏显目标距离 → 循环。
+行为：YOLO 检测 → 滑动窗口平滑边界框中心 → 计算中心偏移(yaw+ud) + 像素面积/躯干高度(fb) → 比例控制器 → rc_control → LED 红灯 + 屏显目标距离 → 循环。
 TOF 仅作为紧急安全下限（最小 50cm），不参与正常距离控制。
-
-控制逻辑参考 `ref/tello_track/modules/tracking_controller.py`。
 
 ## 两种控制模式
 
