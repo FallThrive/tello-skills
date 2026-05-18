@@ -55,7 +55,7 @@ class TelloController:
 
         # --- YOLO 相关 ---
         self._yolo_model = None
-        self._kalman_trackers: dict = {}
+        self._yolo_tracker = KalmanBoxTracker()
 
     # ------------------------------------------------------------------
     # 连接
@@ -310,19 +310,48 @@ class TelloController:
 
         if action == "detect":
             results = self._yolo_model(frame, classes=[0], verbose=False)
-            persons = []
+            detections = []
             for r in results:
                 for box in r.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                     conf = float(box.conf[0])
                     cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    tracker = KalmanBoxTracker()
-                    smooth_cx, smooth_cy = tracker.update(cx, cy)
-                    persons.append({
+                    detections.append({
                         'bbox': [x1, y1, x2, y2],
-                        'center': [int(smooth_cx), int(smooth_cy)],
+                        'center_raw': (cx, cy),
                         'confidence': conf,
                     })
+
+            persons = []
+            if detections:
+                # 取离画面中心最近的人，用持久化 tracker 平滑其中心点
+                fh, fw = frame.shape[:2]
+                frame_cx, frame_cy = fw // 2, fh // 2
+                best = min(detections, key=lambda d: (
+                    (d['center_raw'][0] - frame_cx) ** 2
+                    + (d['center_raw'][1] - frame_cy) ** 2
+                ))
+                best_cx, best_cy = best['center_raw']
+                smooth_cx, smooth_cy = self._yolo_tracker.update(best_cx, best_cy)
+
+                for d in detections:
+                    if d is best:
+                        persons.append({
+                            'bbox': d['bbox'],
+                            'center': [int(smooth_cx), int(smooth_cy)],
+                            'confidence': d['confidence'],
+                        })
+                    else:
+                        raw_cx, raw_cy = d['center_raw']
+                        persons.append({
+                            'bbox': d['bbox'],
+                            'center': [raw_cx, raw_cy],
+                            'confidence': d['confidence'],
+                        })
+            else:
+                # 没有检测到人，重置 tracker
+                self._yolo_tracker = KalmanBoxTracker()
+
             return json.dumps(persons, ensure_ascii=False)
 
         elif action == "count":
