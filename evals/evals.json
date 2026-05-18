@@ -1,0 +1,20 @@
+{
+  "skill_name": "tello",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "开始录像并起飞，向前小步飞找到任务点1，向左绕过柱子，继续向前到任务点2，检测前方人数，找到穿白衣服的人并使其居中，开启跟随模式，降落并停止录制",
+      "expected_output": "AI 应按 CLI 格式输出：1) uv run scripts/vision.py record_start --name mission.avi + uv run scripts/flight.py takeoff；2) uv run scripts/tasks/task_search_pad.py --direction f --step 30；3) 多模态视觉避障循环（uv run scripts/vision.py photo → 模型看图 → uv run scripts/flight.py move --direction l --dist xxx）；4) task_search_pad；5) uv run scripts/yolo.py count → uv run scripts/matrix.py static + uv run scripts/led.py solid --r 0 --g 255 --b 0；6) 多模态人物居中循环；7) uv run scripts/tasks/task_follow.py --duration 120 --model seg；8) uv run scripts/flight.py land + uv run scripts/vision.py record_stop。"
+    },
+    {
+      "id": 2,
+      "prompt": "让无人机起飞，亮红灯，向前飞50cm，拍张照片，然后降落",
+      "expected_output": "AI 应按 CLI 格式输出：1) uv run scripts/flight.py takeoff；2) uv run scripts/led.py solid --r 255 --g 0 --b 0；3) uv run scripts/flight.py move --direction f --dist 50；4) uv run scripts/vision.py photo --name <文件名>；5) uv run scripts/flight.py land。全部使用单次 CLI 脚本，无需 task 脚本。"
+    },
+    {
+      "id": 3,
+      "prompt": "帮我在前方找一下3号挑战卡，找到了就飞到它正上方，显示它的编号，然后亮绿灯",
+      "expected_output": "AI 应使用 uv run scripts/tasks/task_search_pad.py --direction f 处理搜索+飞行+蓝灯+屏显ID的组合逻辑，然后额外调用 uv run scripts/led.py solid --r 0 --g 255 --b 0 亮绿灯。用户额外要求绿灯表示确认，task_search_pad 蓝灯是发现时的默认反馈。"
+    }
+  ]
+}
