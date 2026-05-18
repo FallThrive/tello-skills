@@ -66,3 +66,29 @@ uv add <pkg>     # 添加新依赖
 添加新功能模块：在 `scripts/controller.py` 中注册路由并实现 handler → 创建 CLI 脚本 → 更新 [SKILL.md](SKILL.md)。
 
 项目 PIN 到 PyTorch CUDA 12.8 版本，国内环境使用清华 PyPI 镜像。
+
+## 使用其他环境管理工具
+
+本项目默认使用 uv，SKILL.md 中的命令使用 `python` 前缀（环境无关的通用格式）。如果你更熟悉 conda 或 venv，按以下步骤配置后可直接使用 `python` 代替 `uv run`。
+
+### conda
+
+```bash
+conda create -n tello python=3.12
+conda activate tello
+pip install djitellopy ultralytics
+# PyTorch 安装请参考 https://pytorch.org/get-started/locally/ 选择对应 CUDA 版本
+# 激活环境后直接使用 python 代替 uv run：
+python scripts/flight.py takeoff
+```
+
+### venv
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+python scripts/flight.py takeoff
+```
+
+> **注意**：切换环境后，CLAUDE.md / AGENTS.md 中的环境适配规则也需相应调整（将 `uv run` 替换为你实际使用的执行方式），以确保 AI Agent 生成正确的命令。

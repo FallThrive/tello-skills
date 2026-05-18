@@ -20,6 +20,16 @@ Tello 无人机
 - **[scripts/controller.py](scripts/controller.py)** — 持久 TCP 服务器进程，是 DJITelloPy 的唯一桥梁。首次调用脚本时自动启动，内置 10 秒间隔心跳守护线程，`land` 后自动断开
 - **`scripts/tasks/`** — 实时闭环脚本（`task_follow.py`, `task_search_pad.py`），持续运行至超时或任务完成，内部自己实现控制循环
 
+## 环境与执行
+
+本项目使用 uv 管理依赖和虚拟环境。所有脚本执行命令统一使用 `uv run` 前缀：
+
+```
+uv run scripts/<模块>.py <子命令> [--参数]
+```
+
+不要使用裸 `python` 命令，因为 `uv run` 会自动确保正确的虚拟环境。SKILL.md 中的命令使用 `python` 前缀（环境无关的通用格式），在本仓库中执行时必须替换为 `uv run`。
+
 ## 常用命令
 
 ```bash
