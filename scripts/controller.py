@@ -257,6 +257,12 @@ class TelloController:
 
     def _handle_vision(self, action, args):
         import cv2
+        import os
+        from datetime import datetime
+
+        # 确保 images/ 和 videos/ 目录存在
+        os.makedirs("images", exist_ok=True)
+        os.makedirs("videos", exist_ok=True)
 
         if action == "stream_on":
             self.tello.streamon()
@@ -265,14 +271,19 @@ class TelloController:
             self.tello.streamoff()
             self._frame_read = None
         elif action == "photo":
-            name = args[0] if args else "photo.jpg"
-            cv2.imwrite(name, self._frame_read.frame)
+            name = args[0] if args else ""
+            if not name:
+                name = f"photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            path = os.path.join("images", name)
+            cv2.imwrite(path, self._frame_read.frame)
         elif action == "record_start":
-            name = args[0] if args else "video.avi"
+            name = args[0] if args else ""
             if self._recording:
                 return "error: already recording"
+            if not name:
+                name = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.avi"
+            self._recording_filename = os.path.join("videos", name)
             self._recording = True
-            self._recording_filename = name
             self._recorder_thread = Thread(target=self._record_loop, daemon=True)
             self._recorder_thread.start()
         elif action == "record_stop":

@@ -13,10 +13,10 @@ def main():
     sub.add_parser('stream_off', help='关闭视频流')
 
     p_photo = sub.add_parser('photo', help='拍照')
-    p_photo.add_argument('--name', '-n', default='photo.jpg')
+    p_photo.add_argument('--name', '-n', default='')
 
     p_rec_start = sub.add_parser('record_start', help='开始录像')
-    p_rec_start.add_argument('--name', '-n', default='video.avi')
+    p_rec_start.add_argument('--name', '-n', default='')
 
     sub.add_parser('record_stop', help='停止录像')
 
