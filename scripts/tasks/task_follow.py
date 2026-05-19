@@ -8,12 +8,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from _client import send_command
-from collections import deque
-import numpy as np
 
 
-class FollowController:
-    """比例控制器——参考 ref/tello_track/modules/tracking_controller.py"""
+class SegFollowController:
+    """分割模式比例控制器——用像素面积控制前后距离"""
 
     def __init__(self, center_x=480, center_y=360):
         self.center_x = center_x
@@ -21,7 +19,6 @@ class FollowController:
         self.kp_yaw = 0.2
         self.kp_ud = 0.3
         self.fb_speed_val = 15
-        self.target_history = deque(maxlen=5)
         self.area_min = 100000
         self.area_max = 150000
 
@@ -32,18 +29,11 @@ class FollowController:
         cx, cy = target_info['center']
         area = target_info.get('area', self.area_min + 1)
 
-        self.target_history.append((cx, cy))
-        if len(self.target_history) >= 3:
-            avg = np.mean(self.target_history, axis=0).astype(int)
-            smooth_cx, smooth_cy = avg
-        else:
-            smooth_cx, smooth_cy = cx, cy
-
-        error_x = smooth_cx - self.center_x
+        error_x = cx - self.center_x
         yaw_speed = int(self.kp_yaw * error_x)
         yaw_speed = max(-50, min(50, yaw_speed))
 
-        error_y = self.center_y - smooth_cy
+        error_y = self.center_y - cy
         ud_speed = int(self.kp_ud * error_y)
         ud_speed = max(-50, min(50, ud_speed))
 
@@ -51,6 +41,47 @@ class FollowController:
             fb_speed = self.fb_speed_val
         elif area > self.area_max:
             fb_speed = -self.fb_speed_val
+        else:
+            fb_speed = 0
+
+        return (0, fb_speed, ud_speed, yaw_speed)
+
+
+class PoseFollowController:
+    """姿态模式比例控制器——用躯干高度控制前后距离"""
+
+    def __init__(self, center_x=480, center_y=360):
+        self.center_x = center_x
+        self.center_y = center_y
+        self.kp_yaw = 0.2
+        self.kp_ud = 0.3
+        self.fb_speed_val = 15
+        self.height_min = 200
+        self.height_max = 250
+
+    def update(self, target_info):
+        if target_info is None:
+            return (0, 0, 0, 0)
+
+        cx, cy = target_info['center']
+        torso_height = target_info.get('torso_height', 0)
+        has_hips = target_info.get('has_hips', False)
+
+        error_x = cx - self.center_x
+        yaw_speed = int(self.kp_yaw * error_x)
+        yaw_speed = max(-50, min(50, yaw_speed))
+
+        error_y = self.center_y - cy
+        ud_speed = int(self.kp_ud * error_y)
+        ud_speed = max(-50, min(50, ud_speed))
+
+        if has_hips:
+            if torso_height < self.height_min:
+                fb_speed = self.fb_speed_val
+            elif torso_height > self.height_max:
+                fb_speed = -self.fb_speed_val
+            else:
+                fb_speed = 0
         else:
             fb_speed = 0
 
@@ -69,7 +100,7 @@ def emergency_check():
 def main():
     parser = argparse.ArgumentParser(description='实时人员跟随')
     parser.add_argument('--duration', type=int, default=120, help='跟随时长(秒)')
-    parser.add_argument('--model', choices=['seg', 'pose'], default='seg',
+    parser.add_argument('--model', choices=['seg', 'pose'], default='pose',
                         help='跟踪模型')
     args = parser.parse_args()
 
@@ -85,7 +116,10 @@ def main():
     send_command("vision stream_on")
     time.sleep(1)
 
-    controller = FollowController(center_x=480, center_y=360)
+    if args.model == 'pose':
+        controller = PoseFollowController(center_x=480, center_y=360)
+    else:
+        controller = SegFollowController(center_x=480, center_y=360)
     send_command("led solid 255 0 0")
 
     start_time = time.time()
@@ -97,7 +131,7 @@ def main():
             send_command("flight rc 0 0 0 0")
             break
 
-        result = send_command("yolo detect")
+        result = send_command(f"yolo detect --model {args.model}")
         if result.startswith("error"):
             print(f"检测错误: {result}")
             send_command("flight rc 0 0 0 0")
@@ -105,25 +139,26 @@ def main():
             continue
 
         try:
-            persons = json.loads(result)
+            target = json.loads(result)
         except json.JSONDecodeError:
-            persons = []
+            target = {}
 
-        if not persons:
+        if not target:
             send_command("flight rc 0 0 0 0")
             send_command("matrix static b ?")
             time.sleep(0.1)
             continue
 
-        target = max(persons, key=lambda p: p['confidence'])
-        x1, y1, x2, y2 = target['bbox']
-        target['area'] = (x2 - x1) * (y2 - y1)
-
         lr, fb, ud, yaw = controller.update(target)
         send_command(f"flight rc {lr} {fb} {ud} {yaw}")
 
-        area_k = target['area'] // 1000
-        send_command(f"matrix static r {area_k}k")
+        # LED 屏显距离信息
+        if args.model == 'seg':
+            area_k = int(target.get('area', 0) // 1000)
+            send_command(f"matrix static r {area_k}k")
+        else:
+            h = int(target.get('torso_height', 0))
+            send_command(f"matrix static r {h}h")
 
         time.sleep(0.05)
 
