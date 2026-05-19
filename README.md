@@ -52,7 +52,7 @@ ln -s ../../../SKILL.md .agents/skills/tello/SKILL.md
 
 - Python >= 3.10
 - [DJITelloPy](https://github.com/damiafuentes/DJITelloPy) — Tello 无人机 SDK
-- [Ultralytics YOLO11](https://github.com/ultralytics/ultralytics) — 实时人员检测
+- [Ultralytics YOLO26](https://github.com/ultralytics/ultralytics) — 实时人员检测
 - PyTorch + torchvision
 
 ## 项目结构

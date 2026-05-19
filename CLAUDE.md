@@ -65,8 +65,8 @@ uv run scripts/tasks/task_follow.py --duration 60
 - **controller 是单点串行通道**：所有无人机命令通过它串行执行，一个命令完成后才处理下一个，避免 UDP 命令冲突
 - **心跳机制**：连接后守护线程每 10 秒发送 `rc_control(0,0,0,0)`，无需 AI 手动管理
 - **录像通过 daemon 线程执行**：`_record_loop` 在独立线程中写入帧，主线程响应命令
-- **YOLO 模型懒加载**：首次调用 `yolo detect/count` 时才加载 `yolo11n.pt`，节省内存
-- **滑动窗口平滑**：`SlidingWindowTracker`（5 帧均值）用于检测/跟踪中平滑边界框中心点
+- **YOLO 模型懒加载**：首次调用 `yolo detect/count` 时才加载模型，seg 模式加载 `models/yolo26n-seg.pt`，pose 模式加载 `models/yolo26n-pose.pt`
+
 - **任务脚本自己实现控制循环**：`task_follow.py` 和 `task_search_pad.py` 内部闭环，通过 `_client.send_command()` 调用 controller，无需 controller 支持长任务
 
 ## 安全约束

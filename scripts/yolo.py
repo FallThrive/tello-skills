@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""YOLO 人员检测 CLI（含卡尔曼滤波）"""
+"""YOLO 人员检测 CLI"""
 import argparse, sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 from _client import send_command

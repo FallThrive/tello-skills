@@ -99,14 +99,13 @@ python scripts/vision.py record_start --name <文件名>
 python scripts/vision.py record_stop
 ```
 
-### yolo.py — YOLO 检测 + 滑动窗口平滑
+### yolo.py — YOLO 检测 + IoU 跟踪
 
 ```
-python scripts/yolo.py detect          # 检测人员，输出滑动窗口平滑后的边界框 JSON
+python scripts/yolo.py detect          # 检测人员（IoU 跟踪锁定），输出 JSON
 python scripts/yolo.py count           # 检测人员，输出人数
 ```
 
-内部使用滑动窗口（最近 5 帧取均值）平滑边界框中心，减少抖动。
 
 ### mission_pad.py — 挑战卡
 
@@ -137,7 +136,7 @@ python scripts/tasks/task_search_pad.py --direction <f/b/l/r> [--step 30] [--max
 
 ### task_follow.py — 实时人员跟随
 
-YOLO 检测人员，滑动窗口平滑中心点，比例控制器驱动 rc_control 实时跟随。前后距离通过人物像素大小（分割面积/躯干高度）控制。
+YOLO 检测人员，通过 IoU 跟踪锁定同一人，比例控制器驱动 rc_control 实时跟随。
 
 ```
 python scripts/tasks/task_follow.py [--duration 120] [--model seg]
@@ -145,9 +144,9 @@ python scripts/tasks/task_follow.py [--duration 120] [--model seg]
 
 参数：
 - `--duration`：跟随时长秒（默认 120）
-- `--model`：跟踪模型，`seg`（分割面积控制距离）或 `pose`（躯干高度控制距离），默认 `seg`
+- `--model`：跟踪模型，`pose`（躯干高度控制距离）或 `seg`（分割面积控制距离），默认 `pose`
 
-行为：YOLO 检测 → 滑动窗口平滑边界框中心 → 计算中心偏移(yaw+ud) + 像素面积/躯干高度(fb) → 比例控制器 → rc_control → LED 红灯 + 屏显目标距离 → 循环。
+行为：YOLO 检测 → IoU 锁定（丢失即悬停） → 根据模型类型计算距离 → 比例控制器 → rc_control → LED 红灯 + 屏显距离信息 → 循环。
 TOF 仅作为紧急安全下限（最小 50cm），不参与正常距离控制。
 
 ## 两种控制模式
