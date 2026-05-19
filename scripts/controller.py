@@ -40,6 +40,7 @@ class TelloController:
 
         # --- YOLO 相关 ---
         self._yolo_model = None
+        self._loaded_model_type = None
         self._tracked_target = None  # IoU 跟踪锁定目标 {'bbox': [x1,y1,x2,y2], 'id': int}
 
     # ------------------------------------------------------------------
@@ -319,12 +320,13 @@ class TelloController:
     # ------------------------------------------------------------------
 
     def _ensure_yolo_model(self, model_type="pose"):
-        if self._yolo_model is not None:
+        if self._yolo_model is not None and getattr(self, '_loaded_model_type', None) == model_type:
             return
         from ultralytics import YOLO
         model_path = f"models/yolo26n-{model_type}.pt"
         logger.info(f"加载 YOLO 模型: {model_path}")
         self._yolo_model = YOLO(model_path)
+        self._loaded_model_type = model_type
 
     def _handle_yolo(self, action, model_type="pose"):
         self._ensure_yolo_model(model_type)
