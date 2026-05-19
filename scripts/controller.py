@@ -102,7 +102,14 @@ class TelloController:
         elif module == "vision":
             return self._handle_vision(action, parts[2:])
         elif module == "yolo":
-            return self._handle_yolo(action)
+            # 格式: yolo <action> [--model seg|pose]
+            model_type = "pose"  # 默认
+            remaining = parts[1:]
+            for i, p in enumerate(remaining):
+                if p == "--model" and i + 1 < len(remaining):
+                    model_type = remaining[i + 1]
+                    break
+            return self._handle_yolo(action, model_type)
         elif module == "mission_pad":
             return self._handle_mission_pad(action, parts[2:])
         else:
@@ -300,48 +307,30 @@ class TelloController:
     # YOLO 模块
     # ------------------------------------------------------------------
 
-    def _ensure_yolo_model(self):
-        if self._yolo_model is None:
-            from ultralytics import YOLO
-            self._yolo_model = YOLO("yolo11n.pt")
+    def _ensure_yolo_model(self, model_type="pose"):
+        if self._yolo_model is not None:
+            return
+        from ultralytics import YOLO
+        model_path = f"models/yolo26n-{model_type}.pt"
+        logger.info(f"加载 YOLO 模型: {model_path}")
+        self._yolo_model = YOLO(model_path)
 
-    def _handle_yolo(self, action):
-        self._ensure_yolo_model()
+    def _handle_yolo(self, action, model_type="pose"):
+        self._ensure_yolo_model(model_type)
         if self._frame_read is None:
             return "error: stream not started"
 
         frame = self._frame_read.frame
+        fh, fw = frame.shape[:2]
+        frame_cx, frame_cy = fw // 2, fh // 2
 
         if action == "detect":
             results = self._yolo_model(frame, classes=[0], verbose=False)
-            detections = []
-            for r in results:
-                for box in r.boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    conf = float(box.conf[0])
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    detections.append({
-                        'bbox': [x1, y1, x2, y2],
-                        'center_raw': (cx, cy),
-                        'confidence': conf,
-                    })
 
-            persons = []
-            if detections:
-                # 取离画面中心最近的人，直接返回 raw center（无平滑）
-                fh, fw = frame.shape[:2]
-                frame_cx, frame_cy = fw // 2, fh // 2
-                best = min(detections, key=lambda d: (
-                    (d['center_raw'][0] - frame_cx) ** 2
-                    + (d['center_raw'][1] - frame_cy) ** 2
-                ))
-                persons = [{
-                    'bbox': best['bbox'],
-                    'center': [best['center_raw'][0], best['center_raw'][1]],
-                    'confidence': best['confidence'],
-                }]
-
-            return json.dumps(persons, ensure_ascii=False)
+            if model_type == "seg":
+                return self._yolo_detect_seg(results, frame_cx, frame_cy)
+            else:
+                return self._yolo_detect_pose(results, frame_cx, frame_cy)
 
         elif action == "count":
             results = self._yolo_model(frame, classes=[0], verbose=False)
@@ -349,6 +338,136 @@ class TelloController:
             return str(count)
 
         return "error: unknown yolo action"
+
+    def _yolo_detect_seg(self, results, frame_cx, frame_cy):
+        """分割模式检测：返回 area（掩码面积），IoU 跟踪锁定"""
+        import cv2
+
+        result = results[0]
+        all_detections = []
+
+        if result.boxes is not None:
+            boxes_data = result.boxes.data.cpu().numpy()
+            masks_available = result.masks is not None and result.masks.xy
+
+            for i, box in enumerate(boxes_data):
+                x1, y1, x2, y2 = map(int, box[:4])
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                area = 0
+                if masks_available and i < len(result.masks.xy):
+                    contour = result.masks.xy[i]
+                    if len(contour) > 0:
+                        area = float(cv2.contourArea(contour))
+                all_detections.append({
+                    'bbox': [x1, y1, x2, y2],
+                    'center': [cx, cy],
+                    'area': area,
+                })
+
+        if not all_detections:
+            self._tracked_target = None
+            return json.dumps({}, ensure_ascii=False)
+
+        # IoU 跟踪
+        target = self._iou_match(all_detections, frame_cx, frame_cy)
+        if target is None:
+            return json.dumps({}, ensure_ascii=False)
+
+        return json.dumps(target, ensure_ascii=False)
+
+    def _yolo_detect_pose(self, results, frame_cx, frame_cy):
+        """姿态模式检测：返回 torso_height + has_hips（COCO 关键点），IoU 跟踪锁定"""
+        result = results[0]
+        all_detections = []
+
+        if result.keypoints is not None and result.boxes is not None:
+            keypoints = result.keypoints.data.cpu().numpy()
+            boxes_data = result.boxes.data.cpu().numpy()
+
+            for i, box in enumerate(boxes_data):
+                x1, y1, x2, y2 = map(int, box[:4])
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+                kpts = keypoints[i]
+                l_shoulder = kpts[5]
+                r_shoulder = kpts[6]
+                l_hip = kpts[11]
+                r_hip = kpts[12]
+
+                torso_height = 0
+                has_hips = False
+
+                if l_shoulder[2] > 0.5 and r_shoulder[2] > 0.5:
+                    shoulder_cx = (l_shoulder[0] + r_shoulder[0]) / 2
+                    shoulder_cy = (l_shoulder[1] + r_shoulder[1]) / 2
+                    center = [int(shoulder_cx), int(shoulder_cy)]
+
+                    if l_hip[2] > 0.5 and r_hip[2] > 0.5:
+                        hip_cx = (l_hip[0] + r_hip[0]) / 2
+                        hip_cy = (l_hip[1] + r_hip[1]) / 2
+                        torso_height = float(
+                            ((shoulder_cx - hip_cx) ** 2 + (shoulder_cy - hip_cy) ** 2) ** 0.5
+                        )
+                        has_hips = True
+                else:
+                    center = [cx, cy]
+
+                all_detections.append({
+                    'bbox': [x1, y1, x2, y2],
+                    'center': center,
+                    'torso_height': torso_height,
+                    'has_hips': has_hips,
+                })
+
+        if not all_detections:
+            self._tracked_target = None
+            return json.dumps({}, ensure_ascii=False)
+
+        target = self._iou_match(all_detections, frame_cx, frame_cy)
+        if target is None:
+            return json.dumps({}, ensure_ascii=False)
+
+        return json.dumps(target, ensure_ascii=False)
+
+    def _iou_match(self, detections, frame_cx, frame_cy):
+        """IoU 匹配：首次锁定离中心最近的人，后续跟踪同一人，丢失返回 None"""
+        if self._tracked_target is None:
+            # 首次：选离画面中心最近的人
+            best = min(detections, key=lambda d:
+                (d['center'][0] - frame_cx) ** 2 + (d['center'][1] - frame_cy) ** 2)
+            self._tracked_target = {'bbox': best['bbox'], 'id': 0}
+            return best
+
+        # 已有锁定目标：计算 IoU
+        tx1, ty1, tx2, ty2 = self._tracked_target['bbox']
+        t_area = (tx2 - tx1) * (ty2 - ty1)
+        if t_area <= 0:
+            self._tracked_target = None
+            return None
+
+        best_iou = 0.3  # 最小 IoU 阈值
+        best_det = None
+        for d in detections:
+            dx1, dy1, dx2, dy2 = d['bbox']
+            ix1 = max(tx1, dx1)
+            iy1 = max(ty1, dy1)
+            ix2 = min(tx2, dx2)
+            iy2 = min(ty2, dy2)
+            if ix1 < ix2 and iy1 < iy2:
+                i_area = (ix2 - ix1) * (iy2 - iy1)
+                union = t_area + (dx2 - dx1) * (dy2 - dy1) - i_area
+                iou = i_area / union if union > 0 else 0
+                if iou > best_iou:
+                    best_iou = iou
+                    best_det = d
+
+        if best_det is None:
+            self._tracked_target = None
+            logger.info("IoU 跟踪丢失，无人机悬停等待指令")
+            return None
+
+        self._tracked_target['bbox'] = best_det['bbox']
+        return best_det
 
     # ------------------------------------------------------------------
     # 挑战卡模块
