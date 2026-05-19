@@ -13,10 +13,8 @@ import signal
 import socket
 import sys
 import time
-from collections import deque
 from threading import Lock, Thread
 
-import numpy as np
 from djitellopy import Tello
 
 logging.basicConfig(level=logging.INFO, format='[controller] %(message)s')
@@ -24,19 +22,6 @@ logger = logging.getLogger(__name__)
 
 TCP_HOST = '127.0.0.1'
 TCP_PORT = 9999
-
-
-class SlidingWindowTracker:
-    """滑动窗口平滑边界框中心点（基于历史均值的卡尔曼替代方案）"""
-
-    def __init__(self):
-        self._history: deque = deque(maxlen=5)
-
-    def update(self, cx: float, cy: float) -> np.ndarray:
-        self._history.append((cx, cy))
-        if len(self._history) >= 3:
-            return np.mean(self._history, axis=0)
-        return np.array([cx, cy])
 
 
 class TelloController:
@@ -55,7 +40,7 @@ class TelloController:
 
         # --- YOLO 相关 ---
         self._yolo_model = None
-        self._yolo_tracker = SlidingWindowTracker()
+        self._tracked_target = None  # IoU 跟踪锁定目标 {'bbox': [x1,y1,x2,y2], 'id': int}
 
     # ------------------------------------------------------------------
     # 连接
@@ -343,33 +328,18 @@ class TelloController:
 
             persons = []
             if detections:
-                # 取离画面中心最近的人，用持久化 tracker 平滑其中心点
+                # 取离画面中心最近的人，直接返回 raw center（无平滑）
                 fh, fw = frame.shape[:2]
                 frame_cx, frame_cy = fw // 2, fh // 2
                 best = min(detections, key=lambda d: (
                     (d['center_raw'][0] - frame_cx) ** 2
                     + (d['center_raw'][1] - frame_cy) ** 2
                 ))
-                best_cx, best_cy = best['center_raw']
-                smooth_cx, smooth_cy = self._yolo_tracker.update(best_cx, best_cy)
-
-                for d in detections:
-                    if d is best:
-                        persons.append({
-                            'bbox': d['bbox'],
-                            'center': [int(smooth_cx), int(smooth_cy)],
-                            'confidence': d['confidence'],
-                        })
-                    else:
-                        raw_cx, raw_cy = d['center_raw']
-                        persons.append({
-                            'bbox': d['bbox'],
-                            'center': [raw_cx, raw_cy],
-                            'confidence': d['confidence'],
-                        })
-            else:
-                # 没有检测到人，重置 tracker
-                self._yolo_tracker = SlidingWindowTracker()
+                persons = [{
+                    'bbox': best['bbox'],
+                    'center': [best['center_raw'][0], best['center_raw'][1]],
+                    'confidence': best['confidence'],
+                }]
 
             return json.dumps(persons, ensure_ascii=False)
 
