@@ -12,6 +12,8 @@ wheels/
 .vscode/
 
 ref/
+images/
+videos/
 
 .claude/
 .agents/
