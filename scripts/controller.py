@@ -65,6 +65,11 @@ class TelloController:
         self.tello.connect()
         logger.info(f"已连接无人机，电量: {self.tello.get_battery()}%")
 
+    def _update_cmd_time(self):
+        """更新最后一次命令时间（用于心跳判断），在 _state_lock 保护下调用"""
+        with self._state_lock:
+            self._last_cmd_time = time.time()
+
     # ------------------------------------------------------------------
     # 心跳
     # ------------------------------------------------------------------
@@ -75,10 +80,10 @@ class TelloController:
             time.sleep(self._heartbeat_interval)
             if not self._running:
                 break
-            with self._lock:
+            with self._state_lock:
                 elapsed = time.time() - self._last_cmd_time
             if elapsed >= self._heartbeat_interval:
-                with self._lock:
+                with self._flight_lock:
                     try:
                         self.tello.send_rc_control(0, 0, 0, 0)
                         logger.debug("心跳发送")
