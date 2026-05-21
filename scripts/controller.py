@@ -575,6 +575,21 @@ class TelloController:
     # TCP 服务器
     # ------------------------------------------------------------------
 
+    def _handle_client(self, client: socket.socket, data: str):
+        """在池线程中处理单个客户端连接"""
+        try:
+            logger.info(f"命令: {data}")
+            response = self.execute(data)
+            client.send((response + '\n').encode())
+        except Exception as e:
+            logger.error(f"处理异常: {e}")
+            try:
+                client.send((f"error: {e}\n").encode())
+            except Exception:
+                pass
+        finally:
+            client.close()
+
     def start_server(self):
         self._running = True
         self.connect()
@@ -587,9 +602,14 @@ class TelloController:
         server.listen(5)
         logger.info(f"TCP 服务器监听 {TCP_HOST}:{TCP_PORT}")
 
+        executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cmd")
+
         def cleanup():
             logger.info("正在关闭...")
             self._running = False
+            with self._state_lock:
+                self._follow_stop.set()
+            executor.shutdown(wait=False)
             try:
                 self.tello.land()
             except Exception:
@@ -612,12 +632,14 @@ class TelloController:
                     client, addr = server.accept()
                 except socket.timeout:
                     continue
-                data = client.recv(4096).decode().strip()
+                try:
+                    client.settimeout(5.0)
+                    data = client.recv(4096).decode().strip()
+                except socket.timeout:
+                    client.close()
+                    continue
                 if data:
-                    logger.info(f"命令: {data}")
-                    response = self.execute(data)
-                    client.send((response + '\n').encode())
-                client.close()
+                    executor.submit(self._handle_client, client, data)
             except Exception as e:
                 logger.error(f"服务异常: {e}")
 
