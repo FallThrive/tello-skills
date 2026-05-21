@@ -303,37 +303,48 @@ class TelloController:
         import os
         from datetime import datetime
 
-        # 确保 images/ 和 videos/ 目录存在
         os.makedirs("images", exist_ok=True)
         os.makedirs("videos", exist_ok=True)
 
         if action == "stream_on":
+            # 调用者在 _flight_lock 下
             self.tello.streamon()
-            self._frame_read = self.tello.get_frame_read()
+            with self._state_lock:
+                self._frame_read = self.tello.get_frame_read()
         elif action == "stream_off":
+            # 调用者在 _flight_lock 下
             self.tello.streamoff()
-            self._frame_read = None
+            with self._state_lock:
+                self._frame_read = None
         elif action == "photo":
             name = args[0] if args else ""
             if not name:
                 name = f"photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
             path = os.path.join("images", name)
-            cv2.imwrite(path, self._frame_read.frame)
+            with self._state_lock:
+                fr = self._frame_read
+            if fr is None:
+                return "error: stream not started"
+            cv2.imwrite(path, fr.frame)
         elif action == "record_start":
             name = args[0] if args else ""
-            if self._recording:
-                return "error: already recording"
-            if not name:
-                name = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.avi"
-            self._recording_filename = os.path.join("videos", name)
-            self._recording = True
+            with self._state_lock:
+                if self._recording:
+                    return "error: already recording"
+                if not name:
+                    name = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.avi"
+                self._recording_filename = os.path.join("videos", name)
+                self._recording = True
             self._recorder_thread = Thread(target=self._record_loop, daemon=True)
             self._recorder_thread.start()
         elif action == "record_stop":
-            self._recording = False
-            if self._recorder_thread:
-                self._recorder_thread.join(timeout=3)
-            self._recorder_thread = None
+            with self._state_lock:
+                self._recording = False
+            rt = self._recorder_thread
+            if rt:
+                rt.join(timeout=3)
+            with self._state_lock:
+                self._recorder_thread = None
         else:
             return f"error: unknown vision action '{action}'"
         return "ok"
@@ -342,20 +353,30 @@ class TelloController:
         import cv2
 
         try:
-            if self._frame_read is None:
+            with self._state_lock:
+                fr = self._frame_read
+                filename = self._recording_filename
+            if fr is None:
                 return
-            h, w, _ = self._frame_read.frame.shape
+            h, w, _ = fr.frame.shape
             out = cv2.VideoWriter(
-                self._recording_filename,
-                cv2.VideoWriter_fourcc(*'XVID'),
-                30, (w, h),
+                filename, cv2.VideoWriter_fourcc(*'XVID'), 30, (w, h),
             )
-            while self._recording:
-                out.write(self._frame_read.frame)
+            while True:
+                with self._state_lock:
+                    if not self._recording:
+                        break
+                    fr = self._frame_read
+                if fr is not None:
+                    out.write(fr.frame)
                 time.sleep(0.01)
-            out.release()
         except Exception as e:
             logger.error(f"录制异常: {e}")
+        finally:
+            try:
+                out.release()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # YOLO 模块
