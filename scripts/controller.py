@@ -391,6 +391,103 @@ class TelloController:
         self._yolo_model = YOLO(model_path)
         self._loaded_model_type = model_type
 
+    def _parse_track_detections(self, result, model_type):
+        """从 model.track() 结果中统一提取检测列表（含 track_id）。
+        供 _handle_yolo 和 _task_follow_loop 复用。
+        """
+        import cv2
+
+        detections = []
+        boxes = result.boxes
+        if boxes is None:
+            return detections
+
+        boxes_data = boxes.data.cpu().numpy()
+        track_ids = boxes.id  # tensor(N,) 或 None
+
+        if model_type == "seg":
+            masks_available = result.masks is not None and result.masks.xy
+            for i, box in enumerate(boxes_data):
+                x1, y1, x2, y2 = map(int, box[:4])
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                tid = int(track_ids[i].item()) if track_ids is not None else -1
+                area = 0.0
+                if masks_available and i < len(result.masks.xy):
+                    contour = result.masks.xy[i]
+                    if len(contour) > 0:
+                        area = float(cv2.contourArea(contour))
+                detections.append({
+                    'bbox': [x1, y1, x2, y2],
+                    'center': [cx, cy],
+                    'area': area,
+                    'track_id': tid,
+                })
+        else:
+            keypoints = result.keypoints
+            if keypoints is not None:
+                kpts_data = keypoints.data.cpu().numpy()
+                for i, box in enumerate(boxes_data):
+                    x1, y1, x2, y2 = map(int, box[:4])
+                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                    tid = int(track_ids[i].item()) if track_ids is not None else -1
+
+                    kpts = kpts_data[i]
+                    l_shoulder = kpts[5]
+                    r_shoulder = kpts[6]
+                    l_hip = kpts[11]
+                    r_hip = kpts[12]
+
+                    torso_height = 0.0
+                    has_hips = False
+
+                    if l_shoulder[2] > 0.5 and r_shoulder[2] > 0.5:
+                        shoulder_cx = (l_shoulder[0] + r_shoulder[0]) / 2
+                        shoulder_cy = (l_shoulder[1] + r_shoulder[1]) / 2
+                        center = [int(shoulder_cx), int(shoulder_cy)]
+
+                        if l_hip[2] > 0.5 and r_hip[2] > 0.5:
+                            hip_cx = (l_hip[0] + r_hip[0]) / 2
+                            hip_cy = (l_hip[1] + r_hip[1]) / 2
+                            torso_height = float(
+                                ((shoulder_cx - hip_cx) ** 2 + (shoulder_cy - hip_cy) ** 2) ** 0.5
+                            )
+                            has_hips = True
+                    else:
+                        center = [cx, cy]
+
+                    detections.append({
+                        'bbox': [x1, y1, x2, y2],
+                        'center': center,
+                        'torso_height': torso_height,
+                        'has_hips': has_hips,
+                        'track_id': tid,
+                    })
+
+        return detections
+
+    def _track_match(self, detections, frame_cx, frame_cy):
+        """通过 ultralytics track ID 匹配目标。
+        首次调用选离画面中心最近的人并记录 track_id，
+        后续帧通过 track_id 精确匹配同一人。
+        跟踪丢失返回 None。
+        """
+        if self._follow_target_id is not None:
+            for d in detections:
+                if d['track_id'] == self._follow_target_id:
+                    return d
+            self._follow_target_id = None
+            logger.info("跟踪目标丢失（track ID 不再出现）")
+            return None
+
+        if not detections:
+            return None
+
+        best = min(detections, key=lambda d:
+            (d['center'][0] - frame_cx) ** 2 + (d['center'][1] - frame_cy) ** 2)
+        self._follow_target_id = best['track_id']
+        logger.info(f"锁定新跟踪目标: track_id={self._follow_target_id}")
+        return best
+
     def _handle_yolo(self, action, model_type="pose"):
         self._ensure_yolo_model(model_type)
         if self._frame_read is None:
