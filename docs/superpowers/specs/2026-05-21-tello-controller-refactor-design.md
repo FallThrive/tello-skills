@@ -91,6 +91,10 @@ dispatch(parts)
 
 ## 方向 1 详细：model.track() 替换手动 IoU
 
+### 追踪器选型：BoT-SORT
+
+选用 BoT-SORT 而非 ByteTrack（默认）。原因：实际跟随时人可能被树木、柱子等短暂遮挡，ByteTrack 遮挡后 track_id 会变（导致重新锁定目标、短暂悬停），BoT-SORT 的 ReID 外观特征能在遮挡消失后重新关联同一人，避免"跟丢→重新找人→再跟上"的抖动。ReID 特征提取复用 YOLO backbone 中间特征图，额外开销约 2-5ms，可忽略。
+
 ### API 变更
 
 ```python
@@ -98,8 +102,11 @@ dispatch(parts)
 results = self._yolo_model(frame, classes=[0], verbose=False)
 # results[0].boxes.id → 不存在
 
-# 新（track 模式，开启内置追踪）
-results = self._yolo_model.track(frame, classes=[0], persist=True, verbose=False)
+# 新（track 模式，BoT-SORT + 内置追踪）
+results = self._yolo_model.track(
+    frame, classes=[0], persist=True,
+    tracker='botsort.yaml', verbose=False
+)
 # results[0].boxes.id → tensor(N,) 或 None，float 类型需转 int
 ```
 
@@ -203,7 +210,8 @@ while 未超时 且 _follow_stop 未设置:
   ├─ 读帧（_state_lock 快照 fr = self._frame_read）
   │   └─ fr is None → sleep(0.05), continue
   ├─ YOLO track 推理（_model_lock）
-  │   └─ results = self._yolo_model.track(frame, classes=[0], persist=True, verbose=False)
+  │   └─ results = self._yolo_model.track(frame, classes=[0], persist=True,
+  │                                        tracker='botsort.yaml', verbose=False)
   ├─ 解析检测（_parse_track_detections）
   ├─ track ID 匹配（局部变量 local_track_id）
   │   ├─ 有锁定 → 过滤相同 track_id
