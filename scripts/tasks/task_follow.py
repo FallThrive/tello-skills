@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""实时人员跟随——YOLO检测→比例控制→rc_control闭环"""
+"""实时人员跟随——通过 controller 内闭环 task follow 命令实现"""
 import argparse
 import time
-import json
 import signal
 import sys
 import os
@@ -10,157 +9,54 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from _client import send_command
 
 
-class SegFollowController:
-    """分割模式比例控制器——用像素面积控制前后距离"""
-
-    def __init__(self, center_x=480, center_y=360):
-        self.center_x = center_x
-        self.center_y = center_y
-        self.kp_yaw = 0.2
-        self.kp_ud = 0.3
-        self.fb_speed_val = 15
-        self.area_min = 100000
-        self.area_max = 150000
-
-    def update(self, target_info):
-        if target_info is None:
-            return (0, 0, 0, 0)
-
-        cx, cy = target_info['center']
-        area = target_info.get('area', self.area_min + 1)
-
-        error_x = cx - self.center_x
-        yaw_speed = int(self.kp_yaw * error_x)
-        yaw_speed = max(-50, min(50, yaw_speed))
-
-        error_y = self.center_y - cy
-        ud_speed = int(self.kp_ud * error_y)
-        ud_speed = max(-50, min(50, ud_speed))
-
-        if area < self.area_min:
-            fb_speed = self.fb_speed_val
-        elif area > self.area_max:
-            fb_speed = -self.fb_speed_val
-        else:
-            fb_speed = 0
-
-        return (0, fb_speed, ud_speed, yaw_speed)
-
-
-class PoseFollowController:
-    """姿态模式比例控制器——用躯干高度控制前后距离"""
-
-    def __init__(self, center_x=480, center_y=360):
-        self.center_x = center_x
-        self.center_y = center_y
-        self.kp_yaw = 0.2
-        self.kp_ud = 0.3
-        self.fb_speed_val = 15
-        self.height_min = 200
-        self.height_max = 250
-
-    def update(self, target_info):
-        if target_info is None:
-            return (0, 0, 0, 0)
-
-        cx, cy = target_info['center']
-        torso_height = target_info.get('torso_height', 0)
-        has_hips = target_info.get('has_hips', False)
-
-        error_x = cx - self.center_x
-        yaw_speed = int(self.kp_yaw * error_x)
-        yaw_speed = max(-50, min(50, yaw_speed))
-
-        error_y = self.center_y - cy
-        ud_speed = int(self.kp_ud * error_y)
-        ud_speed = max(-50, min(50, ud_speed))
-
-        if has_hips:
-            if torso_height < self.height_min:
-                fb_speed = self.fb_speed_val
-            elif torso_height > self.height_max:
-                fb_speed = -self.fb_speed_val
-            else:
-                fb_speed = 0
-        else:
-            fb_speed = 0
-
-        return (0, fb_speed, ud_speed, yaw_speed)
-
-
-def emergency_check():
-    tof_str = send_command("sensor tof")
-    try:
-        dist = int(tof_str)
-    except ValueError:
-        return False
-    return 100 <= dist < 500
-
-
 def main():
     parser = argparse.ArgumentParser(description='实时人员跟随')
     parser.add_argument('--duration', type=int, default=120, help='跟随时长(秒)')
     parser.add_argument('--model', choices=['seg', 'pose'], default='pose',
                         help='跟踪模型')
+    parser.add_argument('--kp-yaw', type=float, default=0.2, help='水平偏转系数')
+    parser.add_argument('--kp-ud', type=float, default=0.3, help='垂直方向系数')
+    parser.add_argument('--fb-speed', type=int, default=15, help='前后移动速度(cm/s)')
+    parser.add_argument('--dist-low', type=float, default=None,
+                        help='距离下限（pose: 躯干高度px, seg: 掩码面积px）')
+    parser.add_argument('--dist-high', type=float, default=None,
+                        help='距离上限（pose: 躯干高度px, seg: 掩码面积px）')
     args = parser.parse_args()
 
-    running = True
-
     def sigint_handler(signum, frame):
-        nonlocal running
-        print("\n收到中断信号，安全降落...")
-        running = False
+        print("\n收到中断信号，停止跟随...")
+        try:
+            send_command("task stop")
+        except Exception as e:
+            print(f"无法发送停止命令: {e}")
 
     signal.signal(signal.SIGINT, sigint_handler)
 
-    send_command("vision stream_on")
+    resp = send_command("vision stream_on")
+    if resp.startswith("error"):
+        print(f"开启视频流失败: {resp}")
+        return
     time.sleep(1)
 
-    if args.model == 'pose':
-        controller = PoseFollowController(center_x=480, center_y=360)
-    else:
-        controller = SegFollowController(center_x=480, center_y=360)
     send_command("led solid 255 0 0")
 
-    start_time = time.time()
+    cmd_parts = [f"task follow --model {args.model} --duration {args.duration}"]
+    if args.kp_yaw is not None:
+        cmd_parts.append(f"--kp-yaw {args.kp_yaw}")
+    if args.kp_ud is not None:
+        cmd_parts.append(f"--kp-ud {args.kp_ud}")
+    if args.fb_speed is not None:
+        cmd_parts.append(f"--fb-speed {args.fb_speed}")
+    if args.dist_low is not None:
+        cmd_parts.append(f"--dist-low {args.dist_low}")
+    if args.dist_high is not None:
+        cmd_parts.append(f"--dist-high {args.dist_high}")
+    cmd = " ".join(cmd_parts)
+
     print(f"跟随模式开始，时长 {args.duration} 秒，模型: {args.model}")
 
-    while running and (time.time() - start_time < args.duration):
-        if emergency_check():
-            print("TOF 紧急停止——距离过近")
-            send_command("flight rc 0 0 0 0")
-            break
-
-        result = send_command(f"yolo detect --model {args.model}")
-        if result.startswith("error"):
-            print(f"检测错误: {result}")
-            send_command("flight rc 0 0 0 0")
-            time.sleep(0.1)
-            continue
-
-        try:
-            target = json.loads(result)
-        except json.JSONDecodeError:
-            target = {}
-
-        if not target:
-            send_command("flight rc 0 0 0 0")
-            send_command("matrix static b ?")
-            time.sleep(0.1)
-            continue
-
-        lr, fb, ud, yaw = controller.update(target)
-        send_command(f"flight rc {lr} {fb} {ud} {yaw}")
-
-        # LED 屏显距离信息
-        if args.model == 'seg':
-            area_k = int(target.get('area', 0) // 1000)
-            send_command(f"matrix static r {area_k}k")
-        else:
-            h = int(target.get('torso_height', 0))
-            send_command(f"matrix static r {h}h")
-
-        time.sleep(0.05)
+    response = send_command(cmd, timeout=args.duration + 15)
+    print(f"跟随结果: {response}")
 
     send_command("flight rc 0 0 0 0")
     send_command("led off")
