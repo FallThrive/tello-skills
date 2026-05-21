@@ -602,6 +602,161 @@ class TelloController:
         ft.join()
         return "ok"
 
+    def _task_follow_loop(self, model_type, duration, kp_yaw, kp_ud, fb_speed_val,
+                           dist_low, dist_high):
+        """YOLO track + P 控制闭环。在独立 daemon 线程中运行。"""
+        start_time = time.time()
+        local_track_id = None
+        frame_cx, frame_cy = 480, 360
+
+        with self._state_lock:
+            self._follow_status.update({
+                "running": True, "model": model_type, "elapsed": 0.0,
+                "duration": duration, "track_id": None,
+                "rc_speed": {"lr": 0, "fb": 0, "ud": 0, "yaw": 0},
+                "tof_distance": 0, "target": None
+            })
+
+        with self._model_lock:
+            self._ensure_yolo_model(model_type)
+
+        logger.info(f"task follow 开始: model={model_type}, duration={duration}s")
+
+        try:
+            while (time.time() - start_time) < duration:
+                if self._follow_stop.is_set():
+                    logger.info("task follow 收到外部停止信号")
+                    break
+
+                elapsed = time.time() - start_time
+
+                # ---- TOF 紧急检测 ----
+                tof_dist = -1
+                with self._flight_lock:
+                    self._update_cmd_time()
+                    try:
+                        resp = self.tello.send_read_command("EXT tof?")
+                        tof_dist = int(resp.strip()) if resp.strip() else -1
+                    except Exception:
+                        pass
+
+                if 100 <= tof_dist < 500:
+                    logger.warning(f"TOF 紧急停止: 距离={tof_dist}cm")
+                    break
+
+                # ---- 获取帧 ----
+                with self._state_lock:
+                    fr = self._frame_read
+                if fr is None:
+                    time.sleep(0.05)
+                    continue
+
+                frame = fr.frame
+                fh, fw = frame.shape[:2]
+                frame_cx, frame_cy = fw // 2, fh // 2
+
+                # ---- YOLO track 推理 ----
+                with self._model_lock:
+                    results = self._yolo_model.track(
+                        frame, classes=[0], persist=True,
+                        tracker='botsort.yaml', verbose=False
+                    )
+
+                detections = self._parse_track_detections(results[0], model_type)
+
+                # ---- track ID 匹配 ----
+                target = None
+                if local_track_id is not None:
+                    target = next(
+                        (d for d in detections if d['track_id'] == local_track_id), None
+                    )
+                    if target is None:
+                        local_track_id = None
+                        logger.info("task follow: 跟踪目标丢失")
+
+                if local_track_id is None and detections:
+                    target = min(detections, key=lambda d:
+                        (d['center'][0] - frame_cx) ** 2 + (d['center'][1] - frame_cy) ** 2)
+                    local_track_id = target['track_id']
+                    logger.info(f"task follow: 锁定目标 track_id={local_track_id}")
+
+                # ---- P 控制计算 + 发送 RC ----
+                if target:
+                    lr, fb, ud, yaw = self._compute_p_controls(
+                        target, model_type, frame_cx, frame_cy,
+                        kp_yaw, kp_ud, fb_speed_val, dist_low, dist_high
+                    )
+                else:
+                    lr, fb, ud, yaw = 0, 0, 0, 0
+
+                with self._flight_lock:
+                    self._update_cmd_time()
+                    self.tello.send_rc_control(lr, fb, ud, yaw)
+
+                # ---- LED 矩阵显示 ----
+                with self._flight_lock:
+                    if model_type == "seg":
+                        area_k = int(target.get('area', 0) // 1000) if target else 0
+                        self.tello.send_expansion_command(f"mled s r {area_k}k")
+                    else:
+                        h = int(target.get('torso_height', 0)) if target else 0
+                        self.tello.send_expansion_command(f"mled s r {h}h")
+
+                # ---- 更新共享状态（供 task status 查询） ----
+                with self._state_lock:
+                    self._follow_status.update({
+                        "elapsed": round(elapsed, 1),
+                        "track_id": local_track_id,
+                        "rc_speed": {"lr": lr, "fb": fb, "ud": ud, "yaw": yaw},
+                        "tof_distance": tof_dist,
+                        "target": target
+                    })
+
+                time.sleep(0.05)
+
+        finally:
+            with self._flight_lock:
+                try:
+                    self.tello.send_rc_control(0, 0, 0, 0)
+                except Exception:
+                    pass
+            with self._state_lock:
+                self._follow_status["running"] = False
+            logger.info("task follow 结束，无人机已悬停")
+
+    def _compute_p_controls(self, target, model_type, frame_cx, frame_cy,
+                             kp_yaw, kp_ud, fb_speed_val, dist_low, dist_high):
+        """统一 P 控制器：pose 用 torso_height 控制前后距离，seg 用 area。"""
+        cx, cy = target['center']
+
+        error_x = cx - frame_cx
+        yaw = max(-50, min(50, int(kp_yaw * error_x)))
+
+        error_y = frame_cy - cy
+        ud = max(-50, min(50, int(kp_ud * error_y)))
+
+        if model_type == "pose":
+            if target.get('has_hips', False):
+                th = target['torso_height']
+                if th < dist_low:
+                    fb = fb_speed_val
+                elif th > dist_high:
+                    fb = -fb_speed_val
+                else:
+                    fb = 0
+            else:
+                fb = 0
+        else:
+            area = target.get('area', dist_low + 1)
+            if area < dist_low:
+                fb = fb_speed_val
+            elif area > dist_high:
+                fb = -fb_speed_val
+            else:
+                fb = 0
+
+        return (0, fb, ud, yaw)
+
     # ------------------------------------------------------------------
     # 挑战卡模块
     # ------------------------------------------------------------------
