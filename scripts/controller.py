@@ -95,13 +95,11 @@ class TelloController:
     # ------------------------------------------------------------------
 
     def execute(self, cmd: str) -> str:
-        """解析并执行命令，返回响应字符串"""
-        with self._lock:
-            self._last_cmd_time = time.time()
-            try:
-                return self._dispatch(cmd.strip())
-            except Exception as e:
-                return f"error: {e}"
+        """解析并执行命令，返回响应字符串，锁由 _dispatch 内部分派。"""
+        try:
+            return self._dispatch(cmd.strip())
+        except Exception as e:
+            return f"error: {e}"
 
     def _dispatch(self, cmd: str) -> str:
         parts = cmd.split()
@@ -110,28 +108,53 @@ class TelloController:
 
         module = parts[0]
         action = parts[1] if len(parts) > 1 else ""
+        remaining = parts[2:]
 
+        # ---- 需飞行锁：与无人机 UDP 通信 ----
         if module == "flight":
-            return self._handle_flight(action, parts[2:])
+            with self._flight_lock:
+                self._update_cmd_time()
+                return self._handle_flight(action, remaining)
         elif module == "led":
-            return self._handle_led(action, parts[2:])
+            with self._flight_lock:
+                self._update_cmd_time()
+                return self._handle_led(action, remaining)
         elif module == "matrix":
-            return self._handle_matrix(action, parts[2:])
+            with self._flight_lock:
+                self._update_cmd_time()
+                return self._handle_matrix(action, remaining)
         elif module == "sensor":
-            return self._handle_sensor(action)
-        elif module == "vision":
-            return self._handle_vision(action, parts[2:])
-        elif module == "yolo":
-            # 格式: yolo <action> [--model seg|pose]
-            model_type = "pose"  # 默认
-            remaining = parts[1:]
-            for i, p in enumerate(remaining):
-                if p == "--model" and i + 1 < len(remaining):
-                    model_type = remaining[i + 1]
-                    break
-            return self._handle_yolo(action, model_type)
+            with self._flight_lock:
+                self._update_cmd_time()
+                return self._handle_sensor(action)
         elif module == "mission_pad":
-            return self._handle_mission_pad(action, parts[2:])
+            with self._flight_lock:
+                self._update_cmd_time()
+                return self._handle_mission_pad(action, remaining)
+        elif module == "vision":
+            if action in ("stream_on", "stream_off"):
+                with self._flight_lock:
+                    self._update_cmd_time()
+                    return self._handle_vision(action, remaining)
+            else:
+                # photo, record_start, record_stop: 只读帧或写磁盘，不需飞行锁
+                return self._handle_vision(action, remaining)
+
+        # ---- 需模型锁：YOLO 推理 ----
+        elif module == "yolo":
+            model_type = "pose"
+            remaining_for_yolo = parts[1:]
+            for i, p in enumerate(remaining_for_yolo):
+                if p == "--model" and i + 1 < len(remaining_for_yolo):
+                    model_type = remaining_for_yolo[i + 1]
+                    break
+            with self._model_lock:
+                return self._handle_yolo(action, model_type)
+
+        # ---- 任务模块：内部管理锁 ----
+        elif module == "task":
+            return self._handle_task(action, remaining)
+
         else:
             return f"error: unknown module '{module}'"
 
