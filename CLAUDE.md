@@ -69,6 +69,10 @@ uv run scripts/tasks/task_follow.py --duration 60
 
 - **任务脚本自己实现控制循环**：`task_follow.py` 和 `task_search_pad.py` 内部闭环，通过 `_client.send_command()` 调用 controller，无需 controller 支持长任务
 
+## Git 提交规范
+
+- 提交信息以单行总结形式，格式：`feat: 简短描述`（也支持 fix、docs、refactor、test、chore、style 等类型）
+
 ## 安全约束
 
 - 任何飞行操作前检查电量 ≥ 20%

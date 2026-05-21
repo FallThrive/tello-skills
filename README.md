@@ -95,53 +95,6 @@ uv add <pkg>     # 添加新依赖
 
 项目 PIN 到 PyTorch CUDA 12.8 版本，国内环境使用清华 PyPI 镜像。
 
-## ROS 环境 PYTHONPATH 冲突
-
-如果你的系统中安装了 ROS（如 Humble），其 `setup.bash` 会设置 `PYTHONPATH` 指向 ROS 的 Python 包路径。由于 ROS 也存在一个名为 `scripts` 的包，与项目的 `scripts/` 目录冲突，导致 `from scripts.controller import ...` 报错 `ModuleNotFoundError: No module named 'catkin_pkg'`。
-
-解决方法：在项目根目录创建 `.env` 文件，将项目路径前置到 `PYTHONPATH`：
-
-```bash
-cp .env.example .env
-```
-
-### uv
-
-`uv run` 会自动加载项目根目录的 `.env` 文件，无需额外操作：
-
-```bash
-uv run scripts/flight.py takeoff
-```
-
-### conda
-
-激活环境后手动加载 `.env`：
-
-```bash
-conda activate tello
-set -a; source .env; set +a
-python scripts/flight.py takeoff
-```
-
-或使用 conda 内置变量持久化：
-
-```bash
-conda env config vars set PYTHONPATH=".:$PYTHONPATH"
-conda deactivate && conda activate tello  # 重新激活以生效
-```
-
-### venv
-
-激活环境后手动加载 `.env`：
-
-```bash
-source .venv/bin/activate
-set -a; source .env; set +a
-python scripts/flight.py takeoff
-```
-
-未安装 ROS 的环境中无需以上配置。
-
 ## 使用其他环境管理工具
 
 本项目默认使用 uv，SKILL.md 中的命令使用 `python` 前缀（环境无关的通用格式）。如果你更熟悉 conda 或 venv，按以下步骤配置后可直接使用 `python` 代替 `uv run`。
@@ -167,6 +120,55 @@ python scripts/flight.py takeoff
 ```
 
 > **注意**：切换环境后，CLAUDE.md / AGENTS.md 中的环境适配规则也需相应调整（将 `uv run` 替换为你实际使用的执行方式），以确保 AI Agent 生成正确的命令。
+
+## 常见问题
+
+### ROS 环境 PYTHONPATH 冲突
+
+如果你的系统中安装了 ROS（如 Humble），其 `setup.bash` 会设置 `PYTHONPATH` 指向 ROS 的 Python 包路径。由于 ROS 也存在一个名为 `scripts` 的包，与项目的 `scripts/` 目录冲突，导致 `from scripts.controller import ...` 报错 `ModuleNotFoundError: No module named 'catkin_pkg'`。
+
+解决方法：在项目根目录创建 `.env` 文件，将项目路径前置到 `PYTHONPATH`：
+
+```bash
+cp .env.example .env
+```
+
+#### uv
+
+`uv run` 会自动加载项目根目录的 `.env` 文件，无需额外操作：
+
+```bash
+uv run scripts/flight.py takeoff
+```
+
+#### conda
+
+激活环境后手动加载 `.env`：
+
+```bash
+conda activate tello
+set -a; source .env; set +a
+python scripts/flight.py takeoff
+```
+
+或使用 conda 内置变量持久化：
+
+```bash
+conda env config vars set PYTHONPATH=".:$PYTHONPATH"
+conda deactivate && conda activate tello  # 重新激活以生效
+```
+
+#### venv
+
+激活环境后手动加载 `.env`：
+
+```bash
+source .venv/bin/activate
+set -a; source .env; set +a
+python scripts/flight.py takeoff
+```
+
+未安装 ROS 的环境中无需以上配置。
 
 ## 警告
 
