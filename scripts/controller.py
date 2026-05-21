@@ -526,6 +526,83 @@ class TelloController:
         return "error: unknown yolo action"
 
     # ------------------------------------------------------------------
+    # 任务模块（闭环控制）
+    # ------------------------------------------------------------------
+
+    def _handle_task(self, action, args):
+        if action == "follow":
+            return self._start_task_follow(args)
+        elif action == "stop":
+            with self._state_lock:
+                self._follow_stop.set()
+            return "ok"
+        elif action == "status":
+            with self._state_lock:
+                status = dict(self._follow_status)
+            return json.dumps(status, ensure_ascii=False)
+        else:
+            return f"error: unknown task action '{action}'"
+
+    def _start_task_follow(self, args):
+        """解析参数，检查冲突，启动跟踪线程并阻塞等待完成"""
+        model_type = "pose"
+        duration = 60
+        kp_yaw = 0.2
+        kp_ud = 0.3
+        fb_speed = 15
+        dist_low = None
+        dist_high = None
+
+        i = 0
+        while i < len(args):
+            if args[i] == "--model" and i + 1 < len(args):
+                model_type = args[i + 1]
+                i += 2
+            elif args[i] == "--duration" and i + 1 < len(args):
+                duration = int(args[i + 1])
+                i += 2
+            elif args[i] == "--kp-yaw" and i + 1 < len(args):
+                kp_yaw = float(args[i + 1])
+                i += 2
+            elif args[i] == "--kp-ud" and i + 1 < len(args):
+                kp_ud = float(args[i + 1])
+                i += 2
+            elif args[i] == "--fb-speed" and i + 1 < len(args):
+                fb_speed = int(args[i + 1])
+                i += 2
+            elif args[i] == "--dist-low" and i + 1 < len(args):
+                dist_low = float(args[i + 1])
+                i += 2
+            elif args[i] == "--dist-high" and i + 1 < len(args):
+                dist_high = float(args[i + 1])
+                i += 2
+            else:
+                i += 1
+
+        if model_type not in ("pose", "seg"):
+            return f"error: unknown model type '{model_type}'"
+
+        if dist_low is None:
+            dist_low = 200 if model_type == "pose" else 100000
+        if dist_high is None:
+            dist_high = 250 if model_type == "pose" else 150000
+
+        with self._state_lock:
+            if self._follow_thread is not None and self._follow_thread.is_alive():
+                return "error: task follow already running"
+            self._follow_stop.clear()
+            self._follow_thread = Thread(
+                target=self._task_follow_loop,
+                args=(model_type, duration, kp_yaw, kp_ud, fb_speed, dist_low, dist_high),
+                daemon=True, name="task-follow"
+            )
+            self._follow_thread.start()
+            ft = self._follow_thread
+
+        ft.join()
+        return "ok"
+
+    # ------------------------------------------------------------------
     # 挑战卡模块
     # ------------------------------------------------------------------
 
