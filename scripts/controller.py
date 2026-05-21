@@ -13,7 +13,8 @@ import signal
 import socket
 import sys
 import time
-from threading import Lock, Thread
+from threading import Lock, Thread, Event
+from concurrent.futures import ThreadPoolExecutor
 
 from djitellopy import Tello
 
@@ -27,7 +28,9 @@ TCP_PORT = 9999
 class TelloController:
     def __init__(self):
         self.tello = Tello()
-        self._lock = Lock()
+        self._flight_lock = Lock()   # 序列化所有 self.tello.* UDP 通信
+        self._model_lock = Lock()    # 序列化 YOLO 模型推理
+        self._state_lock = Lock()    # 保护共享状态变量（最内层锁）
         self._running = False
         self._last_cmd_time = time.time()
         self._heartbeat_interval = 10  # 秒
@@ -41,7 +44,18 @@ class TelloController:
         # --- YOLO 相关 ---
         self._yolo_model = None
         self._loaded_model_type = None
-        self._tracked_target = None  # IoU 跟踪锁定目标 {'bbox': [x1,y1,x2,y2], 'id': int}
+        self._follow_target_id = None  # CLI yolo detect 的跟踪目标 ID（track ID，int）
+
+        # --- Task 相关 ---
+        self._follow_stop = Event()    # 通知 task follow 线程停止
+        self._follow_thread = None     # task follow 线程引用
+
+        # --- task status 查询共享状态（_state_lock 保护） ---
+        self._follow_status = {
+            "running": False, "model": "", "elapsed": 0.0, "duration": 0,
+            "track_id": None, "rc_speed": {"lr": 0, "fb": 0, "ud": 0, "yaw": 0},
+            "tof_distance": 0, "target": None
+        }
 
     # ------------------------------------------------------------------
     # 连接
