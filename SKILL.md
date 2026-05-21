@@ -99,10 +99,10 @@ python scripts/vision.py record_start --name <文件名>
 python scripts/vision.py record_stop
 ```
 
-### yolo.py — YOLO 检测 + IoU 跟踪
+### yolo.py — YOLO 检测 + BoT-SORT 跟踪
 
 ```
-python scripts/yolo.py detect          # 检测人员（IoU 跟踪锁定），输出 JSON
+python scripts/yolo.py detect          # 检测人员（ultralytics BoT-SORT 跟踪），输出 JSON
 python scripts/yolo.py count           # 检测人员，输出人数
 ```
 
@@ -136,18 +136,25 @@ python scripts/tasks/task_search_pad.py --direction <f/b/l/r> [--step 30] [--max
 
 ### task_follow.py — 实时人员跟随
 
-YOLO 检测人员，通过 IoU 跟踪锁定同一人，比例控制器驱动 rc_control 实时跟随。
+发送闭环跟踪命令到 controller，controller 内部运行 YOLO+RC 控制循环（无 TCP 往返延迟）。通过 `task status` 轮询状态。
 
 ```
-python scripts/tasks/task_follow.py [--duration 120] [--model seg]
+python scripts/tasks/task_follow.py [--duration 120] [--model pose]
+    [--kp-yaw 0.2] [--kp-ud 0.3] [--fb-speed 15]
+    [--dist-low <值>] [--dist-high <值>]
 ```
 
 参数：
 - `--duration`：跟随时长秒（默认 120）
 - `--model`：跟踪模型，`pose`（躯干高度控制距离）或 `seg`（分割面积控制距离），默认 `pose`
+- `--kp-yaw`：水平偏转比例系数（默认 0.2）
+- `--kp-ud`：垂直方向比例系数（默认 0.3）
+- `--fb-speed`：前后移动速度 cm/s（默认 15）
+- `--dist-low`：距离下限 pose: 200px, seg: 100000px（低于此前进）
+- `--dist-high`：距离上限 pose: 250px, seg: 150000px（高于此后退）
 
-行为：YOLO 检测 → IoU 锁定（丢失即悬停） → 根据模型类型计算距离 → 比例控制器 → rc_control → LED 红灯 + 屏显距离信息 → 循环。
-TOF 仅作为紧急安全下限（最小 50cm），不参与正常距离控制。
+行为：发送 `task follow` 到 controller → controller 内部 YOLO BoT-SORT track → P 控制 → RC 闭环 → 超时/Ctrl+C/TOF紧急停止 → 悬停清理。
+Ctrl+C 发送 `task stop` 中断跟踪。TOF 紧急停止阈值 100-500cm。
 
 ## 两种控制模式
 
@@ -221,6 +228,31 @@ python scripts/tasks/task_follow.py --duration 120 --model seg
 python scripts/flight.py land
 python scripts/vision.py record_stop
 ```
+
+## 默认参数汇总
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `frame-cx` | `480` | 画面中心 X（720p/2） |
+| `frame-cy` | `360` | 画面中心 Y（720p/2） |
+| RC 限幅 | `±50` | 速度命令上下限 |
+| TOF 紧急停止 | `100-500 cm` | 检测距离范围（1-5 米） |
+| 跟踪器 | `BoT-SORT (botsort.yaml)` | ultralytics 内置 ReID + 卡尔曼滤波 |
+| 心跳间隔 | `10 s` | 空闲后发送 rc(0,0,0,0) 保活 |
+| TCP 端口 | `9999` | controller 监听端口 |
+| 线程池大小 | `4` | ThreadPoolExecutor max_workers |
+
+### P 控制器参数
+
+| 参数 | 默认值 | CLI 选项 |
+|------|--------|----------|
+| 水平偏转系数 (kp-yaw) | `0.2` | `--kp-yaw` |
+| 垂直方向系数 (kp-ud) | `0.3` | `--kp-ud` |
+| 前后移动速度 (cm/s) | `15` | `--fb-speed` |
+| 距离下限 (pose) | `200 px` | `--dist-low` |
+| 距离上限 (pose) | `250 px` | `--dist-high` |
+| 距离下限 (seg) | `100000 px` | `--dist-low` |
+| 距离上限 (seg) | `150000 px` | `--dist-high` |
 
 ## 执行注意事项
 
