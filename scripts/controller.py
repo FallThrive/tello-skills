@@ -405,6 +405,75 @@ class TelloController:
                 pass
 
     # ------------------------------------------------------------------
+    # 帧处理辅助
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _process_forward_frame(frame):
+        import cv2
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)  # 如不需要可注释
+        return frame
+
+    @staticmethod
+    def _process_downward_frame(frame):
+        import cv2
+        frame = frame[:240, :]
+        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        return frame
+
+    # ------------------------------------------------------------------
+    # 预览线程
+    # ------------------------------------------------------------------
+
+    def _preview_clean_loop(self, direction):
+        import cv2
+
+        window_name = f"Tello {direction.upper()}"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+        process = (self._process_forward_frame if direction == "forward"
+                   else self._process_downward_frame)
+        dir_label = "FWD" if direction == "forward" else "DOWN"
+        stop_event = self._preview_stops[direction]
+        battery = "??"
+        frame_count = 0
+
+        while not stop_event.is_set():
+            with self._state_lock:
+                fr = self._frame_read
+            if fr is None or fr.frame is None:
+                time.sleep(0.05)
+                continue
+
+            frame = fr.frame.copy()
+            frame = process(frame)
+
+            frame_count += 1
+            if frame_count % 30 == 0:
+                with self._flight_lock:
+                    try:
+                        battery = str(self.tello.get_battery())
+                    except Exception:
+                        pass
+
+            h, w = frame.shape[:2]
+            bar_h = 30
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, h - bar_h), (w, h), (0, 0, 0), -1)
+            frame = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
+            text = f"{dir_label}  Bat: {battery}%"
+            cv2.putText(frame, text, (5, h - 8), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, (255, 255, 255), 1)
+
+            cv2.imshow(window_name, frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        cv2.destroyWindow(window_name)
+        with self._state_lock:
+            self._preview_threads.pop(direction, None)
+
+    # ------------------------------------------------------------------
     # YOLO 模块
     # ------------------------------------------------------------------
 
