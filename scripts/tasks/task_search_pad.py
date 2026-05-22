@@ -25,6 +25,7 @@ def main():
     send_command("mission_pad enable")
 
     found = False
+    preview_started = False
     for i in range(max_attempts):
         resp = send_command(f"flight move {dir_map[direction]} {step}")
         if resp.startswith("error"):
@@ -32,6 +33,10 @@ def main():
             break
 
         time.sleep(0.5)
+
+        if not preview_started:
+            send_command("mission_pad detect")
+            preview_started = True
 
         pad_id = send_command("mission_pad id")
         if pad_id.startswith("error"):
@@ -43,7 +48,7 @@ def main():
         except ValueError:
             pad_id = -1
 
-        if pad_id > 0:
+        if 1 <= pad_id <= 8:
             print(f"检测到挑战卡 #{pad_id}")
             send_command(f"mission_pad fly --id {pad_id}")
             send_command("led solid 0 0 255")
@@ -58,6 +63,10 @@ def main():
         send_command("led solid 255 0 0")
         time.sleep(1)
         send_command("led off")
+
+    if preview_started:
+        result = send_command("mission_pad detect_stop")
+        print(f"挑战卡预览关闭: {result}")
 
     send_command("mission_pad disable")
 
