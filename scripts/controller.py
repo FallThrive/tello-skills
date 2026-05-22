@@ -166,7 +166,7 @@ class TelloController:
             else:
                 return self._handle_vision(action, remaining)
 
-        # ---- 需模型锁：YOLO 推理 ----
+        # ---- YOLO 模块 ----
         elif module == "yolo":
             model_type = "pose"
             remaining_for_yolo = parts[1:]
@@ -174,8 +174,11 @@ class TelloController:
                 if p == "--model" and i + 1 < len(remaining_for_yolo):
                     model_type = remaining_for_yolo[i + 1]
                     break
-            with self._model_lock:
+            if action == "detect":
                 return self._handle_yolo(action, model_type)
+            else:
+                with self._model_lock:
+                    return self._handle_yolo(action, model_type)
 
         # ---- 任务模块：内部管理锁 ----
         elif module == "task":
@@ -527,6 +530,156 @@ class TelloController:
         with self._state_lock:
             self._preview_threads.pop(direction, None)
 
+    SKELETON_EDGES = [
+        (0, 1), (0, 2), (1, 3), (2, 4),
+        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+        (5, 11), (6, 12), (11, 12),
+        (11, 13), (13, 15), (12, 14), (14, 16)
+    ]
+
+    def _draw_yolo_overlay(self, frame, detections, kpts_data, masks_xy,
+                           model_type, locked_id, battery):
+        import cv2
+
+        for i, d in enumerate(detections):
+            tid = d['track_id']
+            is_locked = (tid == locked_id)
+            color = (0, 255, 0) if is_locked else (0, 0, 255)
+            x1, y1, x2, y2 = d['bbox']
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            label = f"person [{tid}]"
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(frame, (x1, y1 - lh - 6), (x1 + lw + 4, y1), color, -1)
+            cv2.putText(frame, label, (x1 + 2, y1 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+            if model_type == "pose" and kpts_data is not None and i < len(kpts_data):
+                kpts = kpts_data[i]
+                for s, e in self.SKELETON_EDGES:
+                    if kpts[s][2] > 0.5 and kpts[e][2] > 0.5:
+                        pt1 = (int(kpts[s][0]), int(kpts[s][1]))
+                        pt2 = (int(kpts[e][0]), int(kpts[e][1]))
+                        cv2.line(frame, pt1, pt2, color, 2)
+                for kp in kpts:
+                    if kp[2] > 0.5:
+                        cv2.circle(frame, (int(kp[0]), int(kp[1])), 3, color, -1)
+
+            if model_type == "seg" and masks_xy is not None and i < len(masks_xy):
+                contour = masks_xy[i]
+                if len(contour) > 0:
+                    cv2.drawContours(frame, [contour.astype(int)], -1, color, 2)
+
+        h, w = frame.shape[:2]
+        bar_h = 30
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, h - bar_h), (w, h), (0, 0, 0), -1)
+        frame = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
+
+        if locked_id is not None:
+            target = next((d for d in detections if d['track_id'] == locked_id), None)
+            if target and model_type == "pose":
+                metric = f"torso:{target.get('torso_height', 0):.0f}px"
+            elif target and model_type == "seg":
+                metric = f"area:{target.get('area', 0) // 1000:.0f}k"
+            else:
+                metric = ""
+            status_text = f"Locked: {locked_id}  {metric}  Bat: {battery}%"
+        else:
+            status_text = f"Locked: ?  Bat: {battery}%"
+        cv2.putText(frame, status_text, (5, h - 8), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (255, 255, 255), 1)
+
+        return frame
+
+    def _preview_yolo_loop(self, model_type):
+        import cv2
+
+        window_name = "Tello YOLO"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+        with self._model_lock:
+            self._ensure_yolo_model(model_type)
+
+        local_locked_id = None
+        battery = "??"
+        frame_count = 0
+
+        while not self._preview_yolo_stop.is_set():
+            with self._state_lock:
+                fr = self._frame_read
+            if fr is None or fr.frame is None:
+                time.sleep(0.05)
+                continue
+
+            frame = fr.frame.copy()
+            frame = self._process_forward_frame(frame)
+            fh, fw = frame.shape[:2]
+            frame_cx, frame_cy = fw // 2, fh // 2
+
+            with self._model_lock:
+                results = self._yolo_model.track(
+                    frame, classes=[0], persist=True,
+                    tracker='botsort.yaml', verbose=False
+                )
+            detections = self._parse_track_detections(results[0], model_type)
+
+            kpts_data = None
+            masks_xy = None
+            if model_type == "pose":
+                kp = results[0].keypoints
+                if kp is not None:
+                    kpts_data = kp.data.cpu().numpy()
+            else:
+                m = results[0].masks
+                if m is not None and m.xy:
+                    masks_xy = m.xy
+
+            if local_locked_id is not None:
+                target = next(
+                    (d for d in detections if d['track_id'] == local_locked_id), None)
+            else:
+                target = None
+
+            if local_locked_id is None and detections:
+                target = min(detections, key=lambda d:
+                    (d['center'][0] - frame_cx) ** 2 + (d['center'][1] - frame_cy) ** 2)
+                local_locked_id = target['track_id']
+                logger.info(f"preview-yolo: 锁定目标 track_id={local_locked_id}")
+
+            with self._state_lock:
+                self._yolo_shared.update({
+                    "model_type": model_type,
+                    "detections": detections,
+                    "kpts_data": kpts_data,
+                    "masks_xy": masks_xy,
+                    "frame_cx": frame_cx,
+                    "frame_cy": frame_cy,
+                    "locked_id": local_locked_id,
+                    "fresh": True,
+                })
+
+            frame_count += 1
+            if frame_count % 30 == 0:
+                with self._flight_lock:
+                    try:
+                        battery = str(self.tello.get_battery())
+                    except Exception:
+                        pass
+
+            frame = self._draw_yolo_overlay(
+                frame, detections, kpts_data, masks_xy, model_type,
+                local_locked_id, battery)
+
+            cv2.imshow(window_name, frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        cv2.destroyWindow(window_name)
+        self._preview_yolo_stop.clear()
+        with self._state_lock:
+            self._preview_yolo_thread = None
+
     # ------------------------------------------------------------------
     # YOLO 模块
     # ------------------------------------------------------------------
@@ -650,20 +803,45 @@ class TelloController:
         frame_cx, frame_cy = fw // 2, fh // 2
 
         if action == "detect":
-            results = self._yolo_model.track(
-                frame, classes=[0], persist=True,
-                tracker='botsort.yaml', verbose=False
-            )
-            result = results[0]
-            detections = self._parse_track_detections(result, model_type)
+            with self._state_lock:
+                yolo_running = (self._preview_yolo_thread is not None
+                                and self._preview_yolo_thread.is_alive())
+            if not yolo_running:
+                self._preview_yolo_stop.clear()
+                with self._state_lock:
+                    self._yolo_shared["fresh"] = False
+                t = Thread(target=self._preview_yolo_loop, args=(model_type,),
+                           daemon=True, name="preview-yolo")
+                t.start()
+                with self._state_lock:
+                    self._preview_yolo_thread = t
+                waited = 0
+                while waited < 3.0:
+                    with self._state_lock:
+                        fresh = self._yolo_shared["fresh"]
+                    if fresh:
+                        break
+                    time.sleep(0.1)
+                    waited += 0.1
+
+            with self._state_lock:
+                detections = list(self._yolo_shared["detections"])
+                locked_id = self._yolo_shared["locked_id"]
+                frame_cx = self._yolo_shared["frame_cx"]
+                frame_cy = self._yolo_shared["frame_cy"]
 
             if not detections:
                 self._follow_target_id = None
                 return json.dumps({}, ensure_ascii=False)
 
-            target = self._track_match(detections, frame_cx, frame_cy)
+            target = None
+            if self._follow_target_id is not None:
+                target = next(
+                    (d for d in detections if d['track_id'] == self._follow_target_id), None)
             if target is None:
-                return json.dumps({}, ensure_ascii=False)
+                target = min(detections, key=lambda d:
+                    (d['center'][0] - frame_cx) ** 2 + (d['center'][1] - frame_cy) ** 2)
+                self._follow_target_id = target['track_id']
 
             return json.dumps(target, ensure_ascii=False)
 
