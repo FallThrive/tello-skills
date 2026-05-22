@@ -20,12 +20,22 @@ def main():
 
     sub.add_parser('record_stop', help='停止录像')
 
+    p_prev_start = sub.add_parser('preview_start', help='开启纯净预览窗口')
+    p_prev_start.add_argument('direction', choices=['forward', 'downward'])
+
+    p_prev_stop = sub.add_parser('preview_stop', help='关闭纯净预览窗口')
+    p_prev_stop.add_argument('direction', choices=['forward', 'downward'])
+
+    sub.add_parser('preview_yolo_stop', help='关闭 YOLO 标注预览窗口')
+
     args = parser.parse_args()
 
     if args.action == 'photo':
         cmd = f"vision photo {args.name}"
     elif args.action == 'record_start':
         cmd = f"vision record_start {args.name}"
+    elif args.action in ('preview_start', 'preview_stop'):
+        cmd = f"vision {args.action} {args.direction}"
     else:
         cmd = f"vision {args.action}"
 
