@@ -57,6 +57,32 @@ class TelloController:
             "tof_distance": 0, "target": None
         }
 
+        # --- 预览相关（_state_lock 保护） ---
+        self._preview_stops = {}       # str -> Event
+        self._preview_threads = {}     # str -> Thread
+
+        # --- YOLO 预览共享状态（_state_lock 保护） ---
+        self._preview_yolo_stop = Event()
+        self._preview_yolo_thread = None
+        self._yolo_shared = {
+            "model_type": "pose",
+            "detections": [],
+            "kpts_data": None,
+            "masks_xy": None,
+            "frame_cx": 480,
+            "frame_cy": 360,
+            "locked_id": None,
+            "fresh": False,
+        }
+
+        # --- 挑战卡预览共享状态（_state_lock 保护） ---
+        self._preview_pad_stop = Event()
+        self._preview_pad_thread = None
+        self._pad_shared = {
+            "id": -1, "x": 0, "y": 0, "z": 0,
+            "active": False,
+        }
+
     # ------------------------------------------------------------------
     # 连接
     # ------------------------------------------------------------------
