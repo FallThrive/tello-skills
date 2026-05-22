@@ -411,7 +411,9 @@ class TelloController:
                 fr = self._frame_read
             if fr is None:
                 return "error: stream not started"
-            cv2.imwrite(path, fr.frame)
+            frame = fr.frame
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(path, frame)
         elif action == "record_start":
             name = args[0] if args else ""
             with self._state_lock:
@@ -454,7 +456,9 @@ class TelloController:
                         break
                     fr = self._frame_read
                 if fr is not None:
-                    out.write(fr.frame)
+                    frame = fr.frame
+                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    out.write(frame)
                 time.sleep(0.01)
         except Exception as e:
             logger.error(f"录制异常: {e}")
@@ -1215,6 +1219,8 @@ class TelloController:
             if len(args) < 2 or args[0] != "--id":
                 return "error: missing required arguments"
             pad_id = int(args[1])
+            if not 1 <= pad_id <= 8:
+                return "error: invalid pad id, must be 1-8"
             self.tello.go_xyz_speed_mid(0, 0, 60, 30, pad_id)
         else:
             return f"error: unknown mission_pad action '{action}'"
