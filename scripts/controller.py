@@ -158,12 +158,12 @@ class TelloController:
                 self._update_cmd_time()
                 return self._handle_mission_pad(action, remaining)
         elif module == "vision":
-            if action in ("stream_on", "stream_off"):
+            if action in ("stream_on", "stream_off",
+                          "preview_start", "preview_stop"):
                 with self._flight_lock:
                     self._update_cmd_time()
                     return self._handle_vision(action, remaining)
             else:
-                # photo, record_start, record_stop: 只读帧或写磁盘，不需飞行锁
                 return self._handle_vision(action, remaining)
 
         # ---- 需模型锁：YOLO 推理 ----
@@ -331,6 +331,60 @@ class TelloController:
 
         os.makedirs("images", exist_ok=True)
         os.makedirs("videos", exist_ok=True)
+
+        if action == "preview_start":
+            direction = args[0] if args else ""
+            if direction not in ("forward", "downward"):
+                return "error: direction must be forward or downward"
+            with self._state_lock:
+                if direction in self._preview_threads:
+                    t = self._preview_threads[direction]
+                    if t is not None and t.is_alive():
+                        return "ok"
+            cam_dir = (self.tello.CAMERA_FORWARD if direction == "forward"
+                       else self.tello.CAMERA_DOWNWARD)
+            self.tello.set_video_direction(cam_dir)
+            with self._state_lock:
+                fr = self._frame_read
+            if fr is None:
+                self.tello.streamon()
+                with self._state_lock:
+                    self._frame_read = self.tello.get_frame_read()
+            stop_ev = Event()
+            with self._state_lock:
+                self._preview_stops[direction] = stop_ev
+            t = Thread(target=self._preview_clean_loop, args=(direction,),
+                       daemon=True, name=f"preview-{direction}")
+            t.start()
+            with self._state_lock:
+                self._preview_threads[direction] = t
+            logger.info(f"预览窗口已开启: {direction}")
+            return "ok"
+
+        elif action == "preview_stop":
+            direction = args[0] if args else ""
+            if direction not in ("forward", "downward"):
+                return "error: direction must be forward or downward"
+            with self._state_lock:
+                stop_ev = self._preview_stops.pop(direction, None)
+            if stop_ev:
+                stop_ev.set()
+            with self._state_lock:
+                t = self._preview_threads.pop(direction, None)
+            if t:
+                t.join(timeout=2)
+            cv2.destroyWindow(f"Tello {direction.upper()}")
+            return "ok"
+
+        elif action == "preview_yolo_stop":
+            self._preview_yolo_stop.set()
+            t = self._preview_yolo_thread
+            if t:
+                t.join(timeout=3)
+            with self._state_lock:
+                self._preview_yolo_thread = None
+            cv2.destroyWindow("Tello YOLO")
+            return "ok"
 
         if action == "stream_on":
             # 调用者在 _flight_lock 下
