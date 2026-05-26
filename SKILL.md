@@ -28,6 +28,8 @@ uv run scripts/<模块>.py <子命令> [--参数]
 - **`scripts/flight.py` / `led.py` / `vision.py` 等** — 单次命令脚本，执行完即退出
 - **`scripts/tasks/`** — 实时闭环脚本，持续运行至超时或任务完成
 
+> `scripts/_client.py` 是内部 TCP 通信模块，**禁止直接执行** `uv run scripts/_client.py`。所有无人机操作必须通过各模块 CLI 脚本（`flight.py`、`sensor.py` 等）完成。
+
 ## 脚本调用方式
 
 所有脚本使用 Bash 工具执行，工作目录为项目根目录：
@@ -49,6 +51,12 @@ python scripts/flight.py land
 ```
 
 连接后自动启动守护线程每 10 秒发送心跳，AI 无需手动管理。
+
+> `scripts/controller.py` 是持久 TCP 服务器进程，首次调用任意 CLI 脚本时自动启动。如需手动启动，后台运行即可：
+> ```
+> uv run scripts/controller.py &
+> ```
+> 看到 `[controller] TCP 服务器监听 127.0.0.1:9999` 日志后即可继续执行后续脚本，controller 在后台持续运行。`land` 后自动断开并退出。
 
 ### flight.py — 飞行控制
 
