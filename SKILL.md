@@ -60,6 +60,8 @@ python scripts/flight.py rotate --direction <cw/ccw> --deg <角度>
 python scripts/flight.py rc --lr <左+右-> --fb <前+后-> --ud <上+下-> --yaw <顺时针+逆时针->
 ```
 
+> 输出：成功返回 `ok`，失败返回 `error: ...`
+
 ### led.py — LED 彩灯
 
 ```
@@ -69,6 +71,8 @@ python scripts/led.py blink --freq 1 --r1 255 --g1 0 --b1 0 --r2 0 --g2 0 --b2 2
 python scripts/led.py off
 ```
 
+> 输出：成功返回 `ok`，失败返回 `error: ...`
+
 ### matrix.py — LED 点阵屏
 
 ```
@@ -76,6 +80,8 @@ python scripts/matrix.py scroll --direction <l/r/u/d> --color <r/b/p> --freq 1 -
 python scripts/matrix.py static --color <r/b/p> --text "OK"
 python scripts/matrix.py off
 ```
+
+> 输出：成功返回 `ok`，失败返回 `error: ...`
 
 ### sensor.py — 传感器
 
@@ -89,6 +95,15 @@ python scripts/sensor.py flight_time    # 累计飞行时长（秒）
 python scripts/sensor.py barometer      # 气压计高度（m）
 ```
 
+> 输出：
+> - `battery` → 百分比数值（如 `85`）
+> - `tof` → 毫米数值（如 `1200`），8192 表示未检测到
+> - `attitude` → `"pitch roll yaw"`（空格分隔，度）
+> - `acceleration` → `"ax ay az"`（空格分隔，cm/s²）
+> - `height` → 相对起飞高度 cm
+> - `flight_time` → 累计飞行秒数
+> - `barometer` → 气压计高度 m
+
 ### vision.py — 视觉
 
 ```
@@ -99,6 +114,8 @@ python scripts/vision.py record_start --name <文件名>
 python scripts/vision.py record_stop
 ```
 
+> 输出：成功返回 `ok`。`photo` 无流时返回 `error: stream not started`，`record_start` 已在录像返回 `error: already recording`。照片保存至 `images/`，视频保存至 `videos/`。
+
 ### yolo.py — YOLO 检测 + BoT-SORT 跟踪
 
 ```
@@ -106,6 +123,7 @@ python scripts/yolo.py detect          # 检测人员（ultralytics BoT-SORT 跟
 python scripts/yolo.py count           # 检测人员，输出人数
 ```
 
+> 输出：`detect` 返回单人检测结果 JSON（含 bbox、center、track_id 等字段），无检测返回 `{}`；`count` 返回人数数字。
 
 ### mission_pad.py — 挑战卡
 
@@ -116,6 +134,12 @@ python scripts/mission_pad.py id                      # 挑战卡 ID（-1 未识
 python scripts/mission_pad.py xyz                     # (x, y, z) 相对坐标（cm）
 python scripts/mission_pad.py fly --id <pad_id>       # 飞至挑战卡正上方
 ```
+
+> 输出：
+> - `enable` / `disable` → `ok`
+> - `id` → 挑战卡 ID 数值（`1`-`8`），未识别返回 `-1`
+> - `xyz` → `"x y z"`（空格分隔，cm）
+> - `fly` → 成功返回 `ok`，失败返回 `error: ...`
 
 ## tasks/ 脚本
 
@@ -133,6 +157,8 @@ python scripts/tasks/task_search_pad.py --direction <f/b/l/r> [--step 30] [--max
 - `--max-attempts`：最大尝试次数（默认 10）
 
 行为：小步飞行 → 等待 0.5s → 检测挑战卡 → 发现则飞到正上方、蓝灯亮、屏显 ID → 未发现则继续，超 max_attempts 退出。
+
+> 输出：控制台打印搜索进度和结果（`检测到挑战卡 #N` 或 `超 max_attempts=...`），脚本退出码 0 成功 / 非 0 失败。
 
 ### task_follow.py — 实时人员跟随
 
@@ -155,6 +181,8 @@ python scripts/tasks/task_follow.py [--duration 120] [--model pose]
 
 行为：发送 `task follow` 到 controller → controller 内部 YOLO BoT-SORT track → P 控制 → RC 闭环 → 超时/Ctrl+C/TOF紧急停止 → 悬停清理。
 Ctrl+C 发送 `task stop` 中断跟踪。TOF 紧急停止阈值 100-500cm。
+
+> 输出：控制台打印 `跟随模式开始，时长 N 秒`，结束后打印 `跟随结果: ok`。
 
 ## 两种控制模式
 
