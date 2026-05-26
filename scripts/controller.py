@@ -143,22 +143,22 @@ class TelloController:
                 return self._handle_flight(action, remaining)
         elif module == "led":
             with self._flight_lock:
-                self._update_cmd_time()
                 return self._handle_led(action, remaining)
         elif module == "matrix":
             with self._flight_lock:
-                self._update_cmd_time()
                 return self._handle_matrix(action, remaining)
         elif module == "sensor":
             with self._flight_lock:
-                self._update_cmd_time()
                 return self._handle_sensor(action)
         elif module == "mission_pad":
-            if action in ("detect", "detect_stop"):
+            if action == "fly":
+                with self._flight_lock:
+                    self._update_cmd_time()
+                    return self._handle_mission_pad(action, remaining)
+            elif action in ("detect", "detect_stop"):
                 return self._handle_mission_pad(action, remaining)
             else:
                 with self._flight_lock:
-                    self._update_cmd_time()
                     return self._handle_mission_pad(action, remaining)
         elif module == "vision":
             if action in ("stream_on", "stream_off",
@@ -1180,7 +1180,6 @@ class TelloController:
                 if self._preview_pad_thread is not None and self._preview_pad_thread.is_alive():
                     return "ok"
             with self._flight_lock:
-                self._update_cmd_time()
                 self.tello.set_video_direction(self.tello.CAMERA_DOWNWARD)
                 with self._state_lock:
                     fr = self._frame_read
@@ -1212,7 +1211,6 @@ class TelloController:
                 z = self._pad_shared["z"]
             cv2.destroyWindow("Tello Pad")
             with self._flight_lock:
-                self._update_cmd_time()
                 self.tello.disable_mission_pads()
             return json.dumps({"id": pad_id, "x": x, "y": y, "z": z}, ensure_ascii=False)
         elif action == "fly":
