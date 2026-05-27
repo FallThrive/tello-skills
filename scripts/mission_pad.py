@@ -17,9 +17,6 @@ def main():
     p_fly = sub.add_parser('fly', help='飞至挑战卡上方')
     p_fly.add_argument('--id', type=int, required=True, help='挑战卡 ID (1-8)')
 
-    sub.add_parser('detect', help='开启挑战卡预览窗口（非阻塞）')
-    sub.add_parser('detect_stop', help='关闭挑战卡预览窗口并返回最后检测结果')
-
     args = parser.parse_args()
 
     if args.action == 'fly':
