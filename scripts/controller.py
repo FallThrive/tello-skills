@@ -383,6 +383,32 @@ class TelloController:
             cv2.destroyWindow("Tello YOLO")
             return "ok"
 
+        elif action == "preview_yolo_start":
+            model_type = "pose"
+            for i, a in enumerate(args):
+                if a == "--model" and i + 1 < len(args):
+                    model_type = args[i + 1]
+                    break
+            with self._state_lock:
+                yolo_running = (self._preview_yolo_thread is not None
+                                and self._preview_yolo_thread.is_alive())
+            if yolo_running:
+                return "ok"
+            with self._state_lock:
+                fr = self._frame_read
+            if fr is None:
+                return "error: stream not started"
+            self._preview_yolo_stop.clear()
+            with self._state_lock:
+                self._yolo_shared["fresh"] = False
+            t = Thread(target=self._preview_yolo_loop, args=(model_type,),
+                       daemon=True, name="preview-yolo")
+            t.start()
+            with self._state_lock:
+                self._preview_yolo_thread = t
+            logger.info("YOLO 预览窗口已开启")
+            return "ok"
+
         if action == "stream_on":
             # 调用者在 _flight_lock 下
             self.tello.streamon()
@@ -801,32 +827,11 @@ class TelloController:
         frame_cx, frame_cy = fw // 2, fh // 2
 
         if action == "detect":
-            with self._state_lock:
-                yolo_running = (self._preview_yolo_thread is not None
-                                and self._preview_yolo_thread.is_alive())
-            if not yolo_running:
-                self._preview_yolo_stop.clear()
-                with self._state_lock:
-                    self._yolo_shared["fresh"] = False
-                t = Thread(target=self._preview_yolo_loop, args=(model_type,),
-                           daemon=True, name="preview-yolo")
-                t.start()
-                with self._state_lock:
-                    self._preview_yolo_thread = t
-                waited = 0
-                while waited < 3.0:
-                    with self._state_lock:
-                        fresh = self._yolo_shared["fresh"]
-                    if fresh:
-                        break
-                    time.sleep(0.1)
-                    waited += 0.1
-
-            with self._state_lock:
-                detections = list(self._yolo_shared["detections"])
-                locked_id = self._yolo_shared["locked_id"]
-                frame_cx = self._yolo_shared["frame_cx"]
-                frame_cy = self._yolo_shared["frame_cy"]
+            results = self._yolo_model.track(
+                frame, classes=[0], persist=True,
+                tracker='botsort.yaml', verbose=False
+            )
+            detections = self._parse_track_detections(results[0], model_type)
 
             if not detections:
                 self._follow_target_id = None
