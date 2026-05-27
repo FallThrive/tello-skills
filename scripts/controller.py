@@ -438,7 +438,7 @@ class TelloController:
                 if self._recording:
                     return "error: already recording"
                 if not name:
-                    name = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.avi"
+                    name = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
                 self._recording_filename = os.path.join("videos", name)
                 self._recording = True
             self._recorder_thread = Thread(target=self._record_loop, daemon=True)
@@ -466,7 +466,7 @@ class TelloController:
                 return
             h, w, _ = fr.frame.shape
             out = cv2.VideoWriter(
-                filename, cv2.VideoWriter_fourcc(*'XVID'), 30, (w, h),
+                filename, cv2.VideoWriter_fourcc(*'mp4v'), 30, (w, h),
             )
             while True:
                 with self._state_lock:
