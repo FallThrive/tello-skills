@@ -412,6 +412,7 @@ class TelloController:
         if action == "stream_on":
             # 调用者在 _flight_lock 下
             self.tello.streamon()
+            self.tello.set_video_fps(self.tello.FPS_30)
             with self._state_lock:
                 self._frame_read = self.tello.get_frame_read()
         elif action == "stream_off":
