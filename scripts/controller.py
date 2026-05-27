@@ -468,6 +468,7 @@ class TelloController:
             out = cv2.VideoWriter(
                 filename, cv2.VideoWriter_fourcc(*'mp4v'), 30, (w, h),
             )
+            last_frame = None
             while True:
                 with self._state_lock:
                     if not self._recording:
@@ -475,8 +476,10 @@ class TelloController:
                     fr = self._frame_read
                 if fr is not None:
                     frame = fr.frame
-                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    out.write(frame)
+                    if frame is not last_frame:
+                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                        out.write(frame_bgr)
+                        last_frame = frame
                 time.sleep(0.01)
         except Exception as e:
             logger.error(f"录制异常: {e}")
