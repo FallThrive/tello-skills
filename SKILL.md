@@ -135,7 +135,7 @@ python scripts/vision.py preview_yolo_start [--model <pose|seg>]  # 手动开启
 python scripts/vision.py preview_yolo_stop                    # 关闭 YOLO 标注预览窗口
 ```
 
-> 输出：成功返回 `ok`。`photo` 无流时返回 `error: stream not started`，`record_start` 已在录像返回 `error: already recording`。照片保存至 `images/`，视频保存至 `videos/`。
+> 输出：成功返回 `ok`。`photo` 和 `record_start` 无流时返回 `error: stream not started`。`record_start` 若上一次录像未正常结束会自动清理并继续。照片保存至 `images/`，视频保存至 `videos/`。**文件名默认含时间戳（如 `video_20260527_173000.mp4`），自定义名称建议也带时间戳，避免重复覆盖。**
 
 ### yolo.py — YOLO 检测 + BoT-SORT 跟踪
 
@@ -243,7 +243,7 @@ AI 按以下顺序执行：
 
 ```
 # 1. 录像 + 起飞
-python scripts/vision.py record_start --name mission.avi
+python scripts/vision.py record_start --name mission.mp4
 python scripts/flight.py takeoff
 
 # 2. 方向搜索挑战卡（脚本闭环）
