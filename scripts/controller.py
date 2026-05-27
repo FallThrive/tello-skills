@@ -75,13 +75,6 @@ class TelloController:
             "fresh": False,
         }
 
-        # --- 挑战卡预览共享状态（_state_lock 保护） ---
-        self._preview_pad_stop = Event()
-        self._preview_pad_thread = None
-        self._pad_shared = {
-            "id": -1, "x": 0, "y": 0, "z": 0,
-            "active": False,
-        }
 
     # ------------------------------------------------------------------
     # 连接
@@ -155,8 +148,6 @@ class TelloController:
                 with self._flight_lock:
                     self._update_cmd_time()
                     return self._handle_mission_pad(action, remaining)
-            elif action in ("detect", "detect_stop"):
-                return self._handle_mission_pad(action, remaining)
             else:
                 with self._flight_lock:
                     return self._handle_mission_pad(action, remaining)
@@ -687,60 +678,6 @@ class TelloController:
         with self._state_lock:
             self._preview_yolo_thread = None
 
-    def _preview_pad_loop(self):
-        import cv2
-
-        window_name = "Tello Pad"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        battery = "??"
-        frame_count = 0
-
-        while not self._preview_pad_stop.is_set():
-            with self._state_lock:
-                fr = self._frame_read
-            if fr is None or fr.frame is None:
-                time.sleep(0.05)
-                continue
-
-            frame = fr.frame.copy()
-            frame = self._process_downward_frame(frame)
-
-            with self._state_lock:
-                pad_info = dict(self._pad_shared)
-
-            frame_count += 1
-            if frame_count % 30 == 0:
-                with self._flight_lock:
-                    try:
-                        battery = str(self.tello.get_battery())
-                    except Exception:
-                        pass
-
-            h, w = frame.shape[:2]
-            bar_h = 30
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (0, h - bar_h), (w, h), (0, 0, 0), -1)
-            frame = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
-
-            pad_id = pad_info.get("id", -1)
-            if 1 <= pad_id <= 8:
-                x, y, z = pad_info.get("x", 0), pad_info.get("y", 0), pad_info.get("z", 0)
-                status = f"Pad: #{pad_id}  ({x},{y},{z})  Bat: {battery}%"
-            else:
-                status = f"Pad: --  Bat: {battery}%"
-            cv2.putText(frame, status, (5, h - 8), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (255, 255, 255), 1)
-
-            cv2.imshow(window_name, frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
-        cv2.destroyWindow(window_name)
-        self._preview_pad_stop.clear()
-        with self._state_lock:
-            self._preview_pad_thread = None
-            self._pad_shared["active"] = False
-
     # ------------------------------------------------------------------
     # YOLO 模块
     # ------------------------------------------------------------------
@@ -1157,62 +1094,12 @@ class TelloController:
             self.tello.disable_mission_pads()
         elif action == "id":
             pad_id = self.tello.get_mission_pad_id()
-            if 1 <= pad_id <= 8:
-                with self._state_lock:
-                    self._pad_shared["id"] = pad_id
-                x = self.tello.get_mission_pad_distance_x()
-                y = self.tello.get_mission_pad_distance_y()
-                z = self.tello.get_mission_pad_distance_z()
-                with self._state_lock:
-                    self._pad_shared.update({"x": x, "y": y, "z": z})
             return str(pad_id)
         elif action == "xyz":
             x = self.tello.get_mission_pad_distance_x()
             y = self.tello.get_mission_pad_distance_y()
             z = self.tello.get_mission_pad_distance_z()
-            pad_id = self.tello.get_mission_pad_id()
-            if 1 <= pad_id <= 8:
-                with self._state_lock:
-                    self._pad_shared.update({"id": pad_id, "x": x, "y": y, "z": z})
             return f"{x} {y} {z}"
-        elif action == "detect":
-            with self._state_lock:
-                if self._preview_pad_thread is not None and self._preview_pad_thread.is_alive():
-                    return "ok"
-            with self._flight_lock:
-                self.tello.set_video_direction(self.tello.CAMERA_DOWNWARD)
-                with self._state_lock:
-                    fr = self._frame_read
-                if fr is None:
-                    self.tello.streamon()
-                    with self._state_lock:
-                        self._frame_read = self.tello.get_frame_read()
-                self.tello.enable_mission_pads()
-                self.tello.set_mission_pad_detection_direction(0)
-            self._preview_pad_stop.clear()
-            with self._state_lock:
-                self._pad_shared["active"] = True
-            t = Thread(target=self._preview_pad_loop, daemon=True, name="preview-pad")
-            t.start()
-            with self._state_lock:
-                self._preview_pad_thread = t
-            logger.info("挑战卡预览窗口已开启")
-            return "ok"
-        elif action == "detect_stop":
-            import cv2
-            self._preview_pad_stop.set()
-            t = self._preview_pad_thread
-            if t:
-                t.join(timeout=2)
-            with self._state_lock:
-                pad_id = self._pad_shared["id"]
-                x = self._pad_shared["x"]
-                y = self._pad_shared["y"]
-                z = self._pad_shared["z"]
-            cv2.destroyWindow("Tello Pad")
-            with self._flight_lock:
-                self.tello.disable_mission_pads()
-            return json.dumps({"id": pad_id, "x": x, "y": y, "z": z}, ensure_ascii=False)
         elif action == "fly":
             if len(args) < 2 or args[0] != "--id":
                 return "error: missing required arguments"
