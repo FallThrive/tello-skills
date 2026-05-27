@@ -33,7 +33,7 @@ class TelloController:
         self._state_lock = Lock()    # 保护共享状态变量（最内层锁）
         self._running = False
         self._last_cmd_time = time.time()
-        self._heartbeat_interval = 10  # 秒
+        self._heartbeat_interval = 5  # 秒（最坏 2x=10s < Tello 15s 超时）
 
         # --- 录像相关 ---
         self._recording = False

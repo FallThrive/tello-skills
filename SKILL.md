@@ -50,7 +50,7 @@ python scripts/flight.py takeoff
 python scripts/flight.py land
 ```
 
-连接后自动启动守护线程每 10 秒发送心跳，AI 无需手动管理。
+连接后自动启动守护线程每 5 秒发送心跳，AI 无需手动管理。
 
 > `scripts/controller.py` 是持久 TCP 服务器进程，首次调用任意 CLI 脚本时自动启动。如需手动启动，后台运行即可：
 > ```
@@ -287,7 +287,7 @@ python scripts/vision.py record_stop
 | RC 限幅 | `±50` | 速度命令上下限 |
 | TOF 紧急停止 | `100-500 cm` | 检测距离范围（1-5 米） |
 | 跟踪器 | `BoT-SORT (botsort.yaml)` | ultralytics 内置 ReID + 卡尔曼滤波 |
-| 心跳间隔 | `10 s` | 空闲后发送 rc(0,0,0,0) 保活 |
+| 心跳间隔 | `5 s` | 空闲后发送 rc(0,0,0,0) 保活 |
 | TCP 端口 | `9999` | controller 监听端口 |
 | 线程池大小 | `4` | ThreadPoolExecutor max_workers |
 
