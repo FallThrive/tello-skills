@@ -28,6 +28,10 @@ def main():
 
     sub.add_parser('preview_yolo_stop', help='关闭 YOLO 标注预览窗口')
 
+    p_ylo_start = sub.add_parser('preview_yolo_start', help='手动开启 YOLO 标注预览窗口')
+    p_ylo_start.add_argument('--model', '-m', choices=['pose', 'seg'], default='pose',
+                              help='模型类型（默认 pose）')
+
     args = parser.parse_args()
 
     if args.action == 'photo':
@@ -36,6 +40,8 @@ def main():
         cmd = f"vision record_start {args.name}"
     elif args.action in ('preview_start', 'preview_stop'):
         cmd = f"vision {args.action} {args.direction}"
+    elif args.action == 'preview_yolo_start':
+        cmd = f"vision preview_yolo_start --model {args.model}"
     else:
         cmd = f"vision {args.action}"
 
