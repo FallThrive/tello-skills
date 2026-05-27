@@ -58,6 +58,15 @@ python scripts/flight.py land
 > ```
 > 看到 `[controller] TCP 服务器监听 127.0.0.1:9999` 日志后即可继续执行后续脚本，controller 在后台持续运行。`land` 后自动断开并退出。
 
+重新连接无人机后，先清理旧 controller 再启动：
+
+```bash
+pgrep -f "scripts/controller.py" && pkill -f "scripts/controller.py" && sleep 1
+uv run scripts/controller.py &
+```
+
+> `pgrep` 检查残留进程，有则 `pkill` 终止，`sleep 1` 等待退出，最后启动新 controller。
+
 ### flight.py — 飞行控制
 
 ```
@@ -120,6 +129,10 @@ python scripts/vision.py stream_off
 python scripts/vision.py photo --name <文件名>
 python scripts/vision.py record_start --name <文件名>
 python scripts/vision.py record_stop
+python scripts/vision.py preview_start <forward|downward>     # 手动开启纯净预览窗口
+python scripts/vision.py preview_stop <forward|downward>      # 关闭纯净预览窗口
+python scripts/vision.py preview_yolo_start [--model <pose|seg>]  # 手动开启 YOLO 标注预览窗口
+python scripts/vision.py preview_yolo_stop                    # 关闭 YOLO 标注预览窗口
 ```
 
 > 输出：成功返回 `ok`。`photo` 无流时返回 `error: stream not started`，`record_start` 已在录像返回 `error: already recording`。照片保存至 `images/`，视频保存至 `videos/`。
