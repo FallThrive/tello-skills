@@ -191,6 +191,14 @@ class TelloController:
             return "ok"
         elif action == "land":
             self.tello.land()
+            with self._state_lock:
+                self._recording = False
+            rt = self._recorder_thread
+            if rt:
+                rt.join(timeout=3)
+            with self._state_lock:
+                self._recorder_thread = None
+                self._recording_filename = None
             return "ok"
         elif action == "move":
             if len(args) < 2:
