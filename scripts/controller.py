@@ -430,6 +430,8 @@ class TelloController:
                 self._frame_read = None
         elif action == "photo":
             name = args[0] if args else ""
+            if name and "." not in name:
+                name += ".jpg"
             if not name:
                 name = f"photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
             path = os.path.join("images", name)
