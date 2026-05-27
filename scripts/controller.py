@@ -442,9 +442,19 @@ class TelloController:
             cv2.imwrite(path, frame)
         elif action == "record_start":
             name = args[0] if args else ""
+            # 自愈：如果上次录像未正常关闭，先清理
             with self._state_lock:
                 if self._recording:
-                    return "error: already recording"
+                    self._recording = False
+            rt = self._recorder_thread
+            if rt:
+                rt.join(timeout=3)
+            with self._state_lock:
+                self._recorder_thread = None
+                if self._frame_read is None:
+                    return "error: stream not started"
+                if name and "." not in name:
+                    name += ".mp4"
                 if not name:
                     name = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
                 self._recording_filename = os.path.join("videos", name)
