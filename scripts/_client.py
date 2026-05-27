@@ -10,8 +10,8 @@ TCP_HOST = '127.0.0.1'
 TCP_PORT = 9999
 
 
-def send_command(cmd: str, timeout: float = 5.0) -> str:
-    """向 controller 发送命令并返回响应。timeout 单位为秒，默认 5.0。"""
+def send_command(cmd: str, timeout: float = 20.0) -> str:
+    """向 controller 发送命令并返回响应。timeout 单位为秒，默认 20.0。"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:

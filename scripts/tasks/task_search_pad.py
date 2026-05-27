@@ -32,21 +32,26 @@ def main():
             print(f"飞行错误: {resp}")
             break
 
-        time.sleep(0.5)
+        time.sleep(1.0)
 
         if not preview_started:
             send_command("mission_pad detect")
             preview_started = True
 
-        pad_id = send_command("mission_pad id")
-        if pad_id.startswith("error"):
-            print(f"检测错误: {pad_id}")
-            continue
-
-        try:
-            pad_id = int(pad_id)
-        except ValueError:
-            pad_id = -1
+        pad_id = -1
+        for _ in range(5):
+            resp = send_command("mission_pad id")
+            if resp.startswith("error"):
+                print(f"检测错误: {resp}")
+                break
+            try:
+                pid = int(resp)
+            except ValueError:
+                pid = -1
+            if 1 <= pid <= 8:
+                pad_id = pid
+                break
+            time.sleep(0.2)
 
         if 1 <= pad_id <= 8:
             print(f"检测到挑战卡 #{pad_id}")
