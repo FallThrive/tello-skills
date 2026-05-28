@@ -990,12 +990,13 @@ class TelloController:
                     self._update_cmd_time()
                     try:
                         resp = self.tello.send_read_command("EXT tof?")
-                        tof_dist = int(resp.strip()) if resp.strip() else -1
+                        if resp.strip():
+                            tof_dist = int(resp.strip().split()[-1])
                     except Exception:
                         pass
 
-                if 100 <= tof_dist < 500:
-                    logger.warning(f"TOF 紧急停止: 距离={tof_dist}cm")
+                if 100 <= tof_dist < 5000:
+                    logger.warning(f"TOF 紧急停止: 距离={tof_dist}mm")
                     break
 
                 # ---- 获取帧 ----
