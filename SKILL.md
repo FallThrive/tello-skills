@@ -43,7 +43,7 @@ python scripts/<模块>.py <子命令> [--参数]
 ## 模块速查
 
 ### 连接管理
-首次调用任意脚本时自动连接无人机，`land` 后自动断开。
+使用脚本前需先手动启动 controller，controller 启动时自动连接无人机。`land` 后 controller 保持运行。
 
 ```
 python scripts/flight.py takeoff
@@ -52,11 +52,16 @@ python scripts/flight.py land
 
 连接后自动启动守护线程每 5 秒发送心跳，AI 无需手动管理。
 
-> `scripts/controller.py` 是持久 TCP 服务器进程，首次调用任意 CLI 脚本时自动启动。如需手动启动，后台运行即可：
+> `scripts/controller.py` 是持久 TCP 服务器进程，需手动后台启动：
 > ```
 > uv run scripts/controller.py &
 > ```
-> 看到 `[controller] TCP 服务器监听 127.0.0.1:9999` 日志后即可继续执行后续脚本，controller 在后台持续运行。`land` 后自动断开并退出。
+> 看到 `[controller] TCP 服务器监听 127.0.0.1:9999` 日志后即可执行后续脚本，controller 在后台持续运行。`land` 后仅降落无人机，controller 进程继续运行，可继续执行 `record_stop` 等命令。
+>
+> 全部任务完成后手动终止 controller：
+> ```
+> pkill -f "scripts/controller.py"
+> ```
 
 重新连接无人机后，先清理旧 controller 再启动：
 
@@ -228,7 +233,7 @@ python scripts/tasks/task_follow.py --duration 120 --model seg
 ## 安全约束
 
 1. 任何飞行操作前检查电量 ≥ 20%：`python scripts/sensor.py battery`
-2. TOF 测距 < 100 不可信，8192 表示未检测到
+2. TOF 测距单位 mm，< 100（10cm 以内）不可信，8192 表示未检测到
 3. 防断连心跳由 controller 守护线程自动处理，AI 无需关心
 4. 所有操作总时长不超过 5 分钟（电池续航）
 5. task 脚本支持 Ctrl+C 触发紧急降落
@@ -285,7 +290,7 @@ python scripts/vision.py record_stop
 | `frame-cx` | `480` | 画面中心 X（720p/2） |
 | `frame-cy` | `360` | 画面中心 Y（720p/2） |
 | RC 限幅 | `±50` | 速度命令上下限 |
-| TOF 紧急停止 | `100-500 cm` | 检测距离范围（1-5 米） |
+| TOF 紧急停止 | `100-5000 mm` | 检测距离范围（0.1-5 米），< 100mm 不可信 |
 | 跟踪器 | `BoT-SORT (botsort.yaml)` | ultralytics 内置 ReID + 卡尔曼滤波 |
 | 心跳间隔 | `5 s` | 空闲后发送 rc(0,0,0,0) 保活 |
 | TCP 端口 | `9999` | controller 监听端口 |
