@@ -19,30 +19,54 @@
 
 ---
 
-### Task 1: TOF 阈值修正
+### Task 1: TOF 解析修复 + 阈值修正
 
 **Files:**
-- Modify: `scripts/controller.py:997`
+- Modify: `scripts/controller.py:988-999`
 
-- [ ] **Step 1: 修改 TOF 紧急停止阈值**
+- [ ] **Step 1: 修复 TOF 解析逻辑并修正阈值**
 
-`EXT tof?` 返回值单位为 mm。当前 `100 <= tof_dist < 500` 只覆盖 10cm~50cm，应修正为 10cm~500cm（100mm~5000mm）。
+`EXT tof?` 返回值格式为 `'tof 52'`（DJITelloPy 附加前缀 `'tof '`），当前 `int(resp.strip())` 对 `'tof 52'` 解析失败被 `except` 吞掉，TOF 紧急停止形同虚设。需按空格分割取最后一段再转整数。
+
+同时修正阈值：`EXT tof?` 返回值单位为 mm，`100-500`（10cm~50cm）修正为 `100-5000`（10cm~500cm）。日志信息同步修正为 mm。
 
 ```python
-# scripts/controller.py 第 997 行
+# scripts/controller.py 第 988-999 行
 # 改前
+tof_dist = -1
+with self._flight_lock:
+    self._update_cmd_time()
+    try:
+        resp = self.tello.send_read_command("EXT tof?")
+        tof_dist = int(resp.strip()) if resp.strip() else -1
+    except Exception:
+        pass
+
 if 100 <= tof_dist < 500:
     logger.warning(f"TOF 紧急停止: 距离={tof_dist}cm")
+    break
+
 # 改后
+tof_dist = -1
+with self._flight_lock:
+    self._update_cmd_time()
+    try:
+        resp = self.tello.send_read_command("EXT tof?")
+        if resp.strip():
+            tof_dist = int(resp.strip().split()[-1])
+    except Exception:
+        pass
+
 if 100 <= tof_dist < 5000:
     logger.warning(f"TOF 紧急停止: 距离={tof_dist}mm")
+    break
 ```
 
 - [ ] **Step 2: 提交**
 
 ```bash
 git add scripts/controller.py
-git commit -m "fix: TOF 紧急停止阈值从 100-500mm 修正为 100-5000mm"
+git commit -m "fix: 修复 TOF 解析（适配 'tof N' 格式）并修正紧急停止阈值为 100-5000mm"
 ```
 
 ---

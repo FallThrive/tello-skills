@@ -25,7 +25,7 @@
 if 100 <= tof_dist < 500:  # 100mm~500mm = 10cm~50cm
 ```
 
-应修正为 100mm~5000mm（10cm~500cm）。
+应修正为 100mm~5000mm（10cm~500cm）。同时 `EXT tof?` 返回值格式为 `'tof 52'` 而非纯数字 `'52'`，`int(resp.strip())` 解析失败被 `except` 吞掉，导致 TOF 紧急停止形同虚设。需修复解析逻辑。
 
 ### 问题 3：SKILL.md 文档不准确
 
@@ -43,13 +43,31 @@ if 100 <= tof_dist < 500:  # 100mm~500mm = 10cm~50cm
 
 文件：[scripts/controller.py](scripts/controller.py)，`_task_follow_loop` 方法内三处修改：
 
-#### 1. TOF 阈值修正（第 997 行）
+#### 1. TOF 阈值修正 + 解析修复（第 988-999 行）
+
+`EXT tof?` 返回值格式为 `'tof 52'`（DJITelloPy 会附加前缀），需按空格分割取最后一段再转整数。日志为 mm 单位。
 
 ```python
 # 改前
+try:
+    resp = self.tello.send_read_command("EXT tof?")
+    tof_dist = int(resp.strip()) if resp.strip() else -1
+except Exception:
+    pass
+
 if 100 <= tof_dist < 500:
+    logger.warning(f"TOF 紧急停止: 距离={tof_dist}cm")
+
 # 改后
+try:
+    resp = self.tello.send_read_command("EXT tof?")
+    if resp.strip():
+        tof_dist = int(resp.strip().split()[-1])
+except Exception:
+    pass
+
 if 100 <= tof_dist < 5000:
+    logger.warning(f"TOF 紧急停止: 距离={tof_dist}mm")
 ```
 
 #### 2. 矩阵命令加 try-except 保护（第 1050-1057 行）
