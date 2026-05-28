@@ -962,6 +962,7 @@ class TelloController:
         start_time = time.time()
         local_track_id = None
         frame_cx, frame_cy = 480, 360
+        last_matrix_time = 0
 
         with self._state_lock:
             self._follow_status.update({
@@ -1048,14 +1049,23 @@ class TelloController:
                     self._update_cmd_time()
                     self.tello.send_rc_control(lr, fb, ud, yaw)
 
-                # ---- LED 矩阵显示 ----
-                with self._flight_lock:
-                    if model_type == "seg":
-                        area_k = int(target.get('area', 0) // 1000) if target else 0
-                        self.tello.send_expansion_command(f"mled s r {area_k}k")
-                    else:
-                        h = int(target.get('torso_height', 0)) if target else 0
-                        self.tello.send_expansion_command(f"mled s r {h}h")
+                # ---- LED 矩阵显示（2Hz + 容错） ----
+                now = time.time()
+                if now - last_matrix_time >= 0.5:
+                    with self._flight_lock:
+                        if model_type == "seg":
+                            area_k = int(target.get('area', 0) // 1000) if target else 0
+                            try:
+                                self.tello.send_expansion_command(f"mled s r {area_k}k")
+                            except Exception:
+                                pass
+                        else:
+                            h = int(target.get('torso_height', 0)) if target else 0
+                            try:
+                                self.tello.send_expansion_command(f"mled s r {h}h")
+                            except Exception:
+                                pass
+                    last_matrix_time = now
 
                 # ---- 更新共享状态（供 task status 查询） ----
                 with self._state_lock:
