@@ -1053,18 +1053,19 @@ class TelloController:
                 now = time.time()
                 if now - last_matrix_time >= 0.5:
                     with self._flight_lock:
-                        if model_type == "seg":
-                            area_k = int(target.get('area', 0) // 1000) if target else 0
-                            try:
-                                self.tello.send_expansion_command(f"mled s r {area_k}k")
-                            except Exception:
-                                pass
-                        else:
-                            h = int(target.get('torso_height', 0)) if target else 0
-                            try:
-                                self.tello.send_expansion_command(f"mled s r {h}h")
-                            except Exception:
-                                pass
+                        try:
+                            if target is None:
+                                # 目标丢失，显示 "?"
+                                self.tello.send_expansion_command("mled s r ?")
+                            elif 100 <= tof_dist < 8192:
+                                # 有效距离，显示米数整数位
+                                meters = tof_dist // 1000
+                                self.tello.send_expansion_command(f"mled s r {meters}")
+                            else:
+                                # 无效距离数据，显示 "-"
+                                self.tello.send_expansion_command("mled s r -")
+                        except Exception:
+                            pass
                     last_matrix_time = now
 
                 # ---- 更新共享状态（供 task status 查询） ----
