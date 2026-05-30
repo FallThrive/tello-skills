@@ -11,13 +11,13 @@ This file provides guidance to AI agents (Claude Code, OpenClaw, OpenCode, et al
 ```
 CLI 脚本 (scripts/*.py)       ← AI/用户直接调用
       ↓ TCP (127.0.0.1:9999)
-Controller 进程 (scripts/controller.py)  ← 持久运行，单线程+Lock 串行执行
+Controller 进程 (scripts/controller.py)  ← 持久运行，多线程+Lock 串行化
       ↓ UDP (DJITelloPy)
 Tello 无人机
 ```
 
 - **[scripts/_client.py](scripts/_client.py)** — 所有 CLI 脚本共用的薄封装层，通过 TCP 向 controller 发送文本命令
-- **[scripts/controller.py](scripts/controller.py)** — 持久 TCP 服务器进程，是 DJITelloPy 的唯一桥梁。首次调用脚本时自动启动，内置 10 秒间隔心跳守护线程，`land` 后自动断开
+- **[scripts/controller.py](scripts/controller.py)** — 持久 TCP 服务器进程，是 DJITelloPy 的唯一桥梁。需手动后台启动 `uv run scripts/controller.py &`，内置 5 秒间隔心跳守护线程，`land` 后仅降落无人机，controller 继续运行
 - **`scripts/tasks/`** — 实时闭环脚本（`task_follow.py`, `task_search_pad.py`），持续运行至超时或任务完成，内部自己实现控制循环
 
 ## 环境与执行
@@ -39,16 +39,15 @@ uv sync
 # 添加新依赖
 uv add <package-name>
 
-# 启动 controller（通常由脚本自动启动，无需手动操作）
-uv run scripts/controller.py
+# 启动 controller（需手动后台启动）
+uv run scripts/controller.py &
 
 # 运行任意 CLI 脚本
 uv run scripts/flight.py takeoff
 uv run scripts/sensor.py battery
-uv run scripts/tasks/task_follow.py --duration 60
 
-# 运行 eval 测试技能行为
-# （eval 文件在 evals/evals.json，通过 skill-creator 技能执行）
+# 运行 task 脚本
+uv run scripts/tasks/task_follow.py --duration 60
 ```
 
 ## 添加新模块
@@ -58,16 +57,24 @@ uv run scripts/tasks/task_follow.py --duration 60
 3. 创建 `scripts/<module>.py` CLI 脚本，通过 `_client.send_command()` 发送命令
 4. 在 [SKILL.md](SKILL.md) 中添加模块速查说明
 
-所有 controller 方法在 `self._lock` 保护下执行，无需额外加锁。
+所有 controller 方法在三层锁保护下执行（`_flight_lock`、`_model_lock`、`_state_lock`），详见 README.md 架构详解。
 
 ## 关键设计要点
 
-- **controller 是单点串行通道**：所有无人机命令通过它串行执行，一个命令完成后才处理下一个，避免 UDP 命令冲突
-- **心跳机制**：连接后守护线程每 10 秒发送 `rc_control(0,0,0,0)`，无需 AI 手动管理
-- **录像通过 daemon 线程执行**：`_record_loop` 在独立线程中写入帧，主线程响应命令
+- **controller 多线程+锁串行化**：ThreadPoolExecutor(4 workers) 处理并发连接，通过 `_flight_lock` 串行化所有 UDP 通信，避免 DJITelloPy 单 socket 协议冲突
+- **心跳机制**：守护线程每 5 秒检查空闲时间，超过 5 秒发送 `rc_control(0,0,0,0)` 防止 Tello 15 秒超时自动降落。仅飞行命令重置心跳计时器，sensor/led/matrix/photo/record 不重置
+- **录像通过 daemon 线程执行**：`_record_loop` 在独立线程中写入帧，`land` 时自动停止录像并清理线程
 - **YOLO 模型懒加载**：首次调用 `yolo detect/count` 时才加载模型，seg 模式加载 `models/yolo26n-seg.pt`，pose 模式加载 `models/yolo26n-pose.pt`
+- **BoT-SORT 追踪器**：使用 ReID 外观特征支持遮挡后重识别，优于 ByteTrack（遮挡后 track_id 会变）
+- **task 两种闭环模式**：`task_follow.py` 委托 controller 服务端闭环（20Hz，无 TCP 延迟）；`task_search_pad.py` 客户端闭环（每次操作一次 TCP 往返，适合低频步进）
 
-- **任务脚本自己实现控制循环**：`task_follow.py` 和 `task_search_pad.py` 内部闭环，通过 `_client.send_command()` 调用 controller，无需 controller 支持长任务
+## 开发注意事项
+
+- **RGB/BGR 帧格式**：DJITelloPy `BackgroundFrameRead.frame` 输出 RGB，OpenCV 需 BGR，拍照和录像必须 `cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)`
+- **ESP32 点阵屏限制**：`mled s` 只支持单字符，多字符需用 `mled l` 滚动显示；高频发送会触发 `matrix error` → `TelloException`，task follow 中已降频到 2Hz 并加 try-except 保护
+- **TOF 返回值格式**：DJITelloPy 返回 `'tof 52'` 而非纯数字，需 `resp.strip().split()[-1]` 解析；单位 mm；< 100 不可信，8192 表示未检测到
+- **挑战卡检测独立于视频流**：SDK 3.0 的 `mon`/`mdirection` 与 `streamon` 是独立命令，切换下视摄像头会中断前视录像
+- **daemon 线程需 try-except 保护**：ESP32 命令不稳定，未捕获异常会导致 daemon 线程静默崩溃
 
 ## Git 提交规范
 
